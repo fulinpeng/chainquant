@@ -1,0 +1,9 @@
+{
+  "name": "@chainquant/web",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo \"[web] Next.js placeholder — run pnpm init when ready\"",
+    "build": "echo \"[web] build placeholder\""
+  }
+}

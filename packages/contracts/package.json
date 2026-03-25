@@ -1,0 +1,9 @@
+{
+  "name": "@chainquant/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo \"[contracts] Hardhat placeholder\"",
+    "build": "echo \"[contracts] compile placeholder\""
+  }
+}

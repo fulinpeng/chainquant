@@ -1,0 +1,9 @@
+{
+  "name": "@chainquant/api",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo \"[api] NestJS placeholder — run nest init when ready\"",
+    "build": "echo \"[api] build placeholder\""
+  }
+}
