@@ -1,14 +1,17 @@
 import { http, createConfig } from "wagmi";
-import { mainnet, sepolia } from "wagmi/chains";
+import { mainnet, base, bsc, arbitrum, optimism } from "wagmi/chains";
 import { injected } from "wagmi/connectors";
 
 /** wagmi: browser-injected wallets such as MetaMask */
 export const wagmiConfig = createConfig({
   ssr: true,
-  chains: [mainnet, sepolia],
+  chains: [mainnet, base, bsc, arbitrum, optimism],
   connectors: [injected()],
   transports: {
     [mainnet.id]: http(),
-    [sepolia.id]: http(),
+    [base.id]: http(),
+    [bsc.id]: http(),
+    [arbitrum.id]: http(),
+    [optimism.id]: http(),
   },
 });

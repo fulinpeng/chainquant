@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useAccount, useWalletClient } from "wagmi";
-import { mainnet, sepolia } from "wagmi/chains";
+import { isSupportedChainId } from "@/config/supportedChains";
 
 function generateNonce() {
   const bytes = new Uint8Array(16);
@@ -33,8 +33,7 @@ export function useSiweSignIn(address?: string) {
   const [signedAddress, setSignedAddress] = useState<string | undefined>();
   const [isSigning, setIsSigning] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const isSupportedChain =
-    chainId === mainnet.id || chainId === sepolia.id;
+  const isSupportedChain = isSupportedChainId(chainId);
   const canSign = Boolean(address && walletClient && isSupportedChain);
 
   const apiBaseUrl =
