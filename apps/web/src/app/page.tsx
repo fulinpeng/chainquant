@@ -16,6 +16,7 @@ function WalletSection({
     isSigning,
     error,
     canSign,
+    isSupportedChain,
     signIn,
     clearSignedAddress,
   } =
@@ -33,7 +34,13 @@ function WalletSection({
           disabled={isSigning || !canSign}
           className="rounded-lg bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {isSigning ? "Signing..." : !canSign ? "Preparing..." : "Sign In with Ethereum"}
+          {isSigning
+            ? "Signing..."
+            : canSign
+              ? "Sign In with Ethereum"
+              : isSupportedChain
+                ? "Preparing..."
+                : "Unsupported network"}
         </button>
       ) : (
         <p className="text-sm text-zinc-600">
@@ -44,6 +51,12 @@ function WalletSection({
 
       {error && (
         <p className="max-w-md text-center text-sm text-red-600">{error}</p>
+      )}
+
+      {!signedAddress && !canSign && !isSupportedChain && (
+        <p className="max-w-md text-center text-sm text-zinc-600">
+          Unsupported network. Please switch to Ethereum Mainnet or Sepolia.
+        </p>
       )}
 
       <button

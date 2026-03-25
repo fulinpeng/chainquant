@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useWalletClient } from "wagmi";
+import { useAccount, useWalletClient } from "wagmi";
+import { mainnet, sepolia } from "wagmi/chains";
 
 function generateNonce() {
   const bytes = new Uint8Array(16);
@@ -27,11 +28,14 @@ function buildSiweMessage(params: {
 }
 
 export function useSiweSignIn(address?: string) {
+  const { chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
   const [signedAddress, setSignedAddress] = useState<string | undefined>();
   const [isSigning, setIsSigning] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const canSign = Boolean(address && walletClient);
+  const isSupportedChain =
+    chainId === mainnet.id || chainId === sepolia.id;
+  const canSign = Boolean(address && walletClient && isSupportedChain);
 
   const apiBaseUrl =
     process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
@@ -101,6 +105,7 @@ export function useSiweSignIn(address?: string) {
     isSigning,
     error,
     canSign,
+    isSupportedChain,
     signIn,
     clearSignedAddress,
   };
