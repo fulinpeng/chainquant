@@ -1,6 +1,7 @@
 {
   "name": "chainquant",
   "private": true,
+  "packageManager": "pnpm@8.15.9",
   "scripts": {
     "dev": "pnpm -r --parallel run dev",
     "build": "pnpm -r run build"
