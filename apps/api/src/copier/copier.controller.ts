@@ -1,29 +1,49 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   HttpCode,
   HttpStatus,
   Post,
+  Query,
 } from "@nestjs/common";
 import { CopierService } from "./copier.service";
-import { EngineService } from "../engine/engine.service";
-import { StateStore } from "../state/state-store.service";
+import { EngineManager } from "../engine/engine.manager";
+import type { CopierSignalPayload } from "../engine/types";
 
 type CopierRunBody = {
   address: string;
 };
 
-type CopierSignalBody = {
-  type: "BUY" | "SELL";
+type CopierEngineKeyBody = {
+  address: string;
+  /** Traded token; defaults to `address` when omitted. */
+  token?: string;
 };
+
+type CopierSignalBody = CopierSignalPayload;
+
+function resolveEngineKey(body: { address?: string; token?: string }): {
+  address: string;
+  token: string;
+} {
+  const address = (body.address ?? "").trim();
+  if (!address) {
+    throw new BadRequestException("address is required");
+  }
+  const token = (body.token ?? address).trim();
+  if (!token) {
+    throw new BadRequestException("token is required");
+  }
+  return { address, token };
+}
 
 @Controller("copier")
 export class CopierController {
   constructor(
     private readonly copierService: CopierService,
-    private readonly engineService: EngineService,
-    private readonly stateStore: StateStore,
+    private readonly engineManager: EngineManager,
   ) {}
 
   @Post("run")
@@ -34,36 +54,68 @@ export class CopierController {
 
   @Post("start")
   @HttpCode(HttpStatus.OK)
-  start(@Body() body: CopierRunBody) {
-    return this.engineService.start(body.address);
+  start(@Body() body: CopierEngineKeyBody) {
+    const { address, token } = resolveEngineKey(body);
+    const engine = this.engineManager.getOrCreateEngine(address, token);
+    const out = engine.start();
+    this.engineManager.notifyEngineStarted();
+    return out;
   }
 
   @Post("stop")
   @HttpCode(HttpStatus.OK)
-  stop() {
-    return this.engineService.stop();
+  async stop(@Body() body: CopierEngineKeyBody) {
+    const { address, token } = resolveEngineKey(body);
+    const engine = this.engineManager.getEngineOrThrow(address, token);
+    const out = await engine.stop();
+    this.engineManager.notifyEngineStopped();
+    return out;
   }
 
   @Get("status")
-  status() {
-    return this.engineService.getStatus();
+  status(
+    @Query("address") addressQ?: string,
+    @Query("token") tokenQ?: string,
+  ) {
+    const { address, token } = resolveEngineKey({
+      address: addressQ,
+      token: tokenQ,
+    });
+    return this.engineManager.getEngineOrThrow(address, token).getStatus();
   }
 
   @Get("result")
-  result() {
-    return this.engineService.getResult();
+  result(
+    @Query("address") addressQ?: string,
+    @Query("token") tokenQ?: string,
+  ) {
+    const { address, token } = resolveEngineKey({
+      address: addressQ,
+      token: tokenQ,
+    });
+    return this.engineManager.getEngineOrThrow(address, token).getResult();
   }
 
   @Get("events")
-  events() {
-    const events = this.stateStore.getEvents();
-    const tail = events.slice(-20);
-    return { events: tail };
+  events(
+    @Query("address") addressQ?: string,
+    @Query("token") tokenQ?: string,
+  ) {
+    const { address, token } = resolveEngineKey({
+      address: addressQ,
+      token: tokenQ,
+    });
+    const engine = this.engineManager.getEngineOrThrow(address, token);
+    return { events: engine.getRecentEvents(20) };
   }
 
   @Post("signal")
   @HttpCode(HttpStatus.OK)
-  signal(@Body() body: CopierSignalBody) {
-    return this.engineService.onSignal({ type: body.type });
+  signal(@Body() body: CopierSignalBody & CopierEngineKeyBody) {
+    const { address, token } = resolveEngineKey(body);
+    return this.engineManager.handleSignal(address, {
+      type: body.type,
+      token,
+    });
   }
 }
