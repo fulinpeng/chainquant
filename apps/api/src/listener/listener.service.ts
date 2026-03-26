@@ -14,7 +14,6 @@ import { CHAINS, type ChainKey } from "../config/chains";
 export class ListenerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ListenerService.name);
   private readonly providers = new Map<ChainKey, WebSocketProvider>();
-  private readonly blockInFlight = new Set<ChainKey>();
   private started = false;
 
   constructor(
@@ -53,6 +52,10 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
 
     const entries = Object.entries(CHAINS) as Array<[ChainKey, (typeof CHAINS)[ChainKey]]>;
     for (const [chainKey, cfg] of entries) {
+      if (!cfg.enabled) {
+        this.logger.log(`[${cfg.name}] skipped by config (enabled=false)`);
+        continue;
+      }
       const wsUrl = (process.env[cfg.wsUrlEnv] ?? "").trim();
       if (!wsUrl) {
         this.logger.warn(`[${cfg.name}] ${cfg.wsUrlEnv} not set; skip listener`);
@@ -79,19 +82,46 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
     provider: WebSocketProvider,
     blockNumber: number,
   ): Promise<void> {
-    if (this.blockInFlight.has(chainKey)) return;
-    this.blockInFlight.add(chainKey);
     try {
-      const block = await provider.getBlock(blockNumber);
+      // Fetch block with full tx objects in one request to avoid per-tx RPC fan-out.
+      const block = await provider.getBlock(blockNumber, true);
       const txs = block?.transactions ?? [];
-      for (const txHash of txs) {
-        const tx = await provider.getTransaction(txHash);
+      for (const txItem of txs) {
+        const tx = typeof txItem === "string"
+          ? await provider.getTransaction(txItem)
+          : (txItem as {
+              hash: string;
+              from?: string | null;
+              to?: string | null;
+              data?: string | null;
+            });
         if (!tx) continue;
+        const txHash = tx.hash;
         const from = (tx.from ?? "").toLowerCase();
         if (!from || !this.engineManager.isWatchedAddress(from)) continue;
 
-        const parsed = this.parserService.parseSwapTx({ to: tx.to, data: tx.data }, chainKey);
-        if (!parsed) continue;
+        const chainCfg = CHAINS[chainKey];
+        const toLower = (tx.to ?? "").toLowerCase();
+        const isV4UniversalRouter = chainCfg.v4UniversalRouters.includes(toLower);
+
+        const parsed = isV4UniversalRouter
+          ? await (async () => {
+              // Listener only fetches receipt for V4 routers to reduce RPC load.
+              const receipt = await provider.getTransactionReceipt(txHash);
+              return this.parserService.parseSwapTx(
+                { to: tx.to, data: tx.data },
+                chainKey,
+                { receipt: receipt ?? undefined, userAddress: from },
+              );
+            })()
+          : this.parserService.parseSwapTx({ to: tx.to, data: tx.data }, chainKey);
+
+        if (!parsed) {
+          this.logger.log(
+            `[${chainCfg.name}] watched tx parse skipped: ${txHash} to=${toLower}`,
+          );
+          continue;
+        }
 
         let price: number;
         try {
@@ -120,10 +150,8 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
       }
     } catch (err) {
       this.logger.warn(
-        `Block handling failed(${blockNumber}): ${err instanceof Error ? err.message : String(err)}`,
+        `[${chainKey}] Block handling failed(${blockNumber}): ${err instanceof Error ? err.message : String(err)}`,
       );
-    } finally {
-      this.blockInFlight.delete(chainKey);
     }
   }
 }
