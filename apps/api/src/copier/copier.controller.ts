@@ -15,7 +15,7 @@ type CopierRunBody = {
 };
 
 type CopierSignalBody = {
-  price: number;
+  type: "BUY" | "SELL";
 };
 
 @Controller("copier")
@@ -62,6 +62,6 @@ export class CopierController {
   @Post("signal")
   @HttpCode(HttpStatus.OK)
   signal(@Body() body: CopierSignalBody) {
-    return this.engineService.triggerSignal(body.price);
+    return this.engineService.onSignal({ type: body.type });
   }
 }

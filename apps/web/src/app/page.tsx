@@ -22,10 +22,13 @@ type TradingBacktestResponse = {
 
 type EngineStatus = {
   running: boolean;
-  state: "IDLE" | "IN_POSITION";
+  mode: "MANUAL" | "AUTO";
+  state: "IDLE" | "WAITING_ENTRY" | "IN_POSITION";
   currentPrice: number | null;
   entryPrice: number | null;
+  pendingSignalType: "BUY" | "SELL" | null;
   position: {
+    side: "LONG" | "SHORT";
     entryTime: number;
     entryPrice: number;
     stopLoss: number;
@@ -72,7 +75,6 @@ export default function Home() {
   const [engineResult, setEngineResult] =
     useState<TradingBacktestResponse | null>(null);
   const [engineBusy, setEngineBusy] = useState(false);
-  const [signalPriceInput, setSignalPriceInput] = useState("");
   const [copierEvents, setCopierEvents] = useState<CopierEventRecord[]>([]);
   const pollStatusRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollResultRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -251,27 +253,29 @@ export default function Home() {
     }
   }
 
-  async function sendManualSignal() {
-    const raw = signalPriceInput.trim();
-    const price = Number(raw);
+  async function sendCopierSignal(type: "BUY" | "SELL") {
     setEngineError(null);
-    if (!Number.isFinite(price) || price <= 0) {
-      setEngineError("请输入有效的 signal price（正数）");
-      return;
-    }
     setEngineBusy(true);
     try {
       const res = await fetch(`${apiBaseUrl}/copier/signal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ price }),
+        body: JSON.stringify({ type }),
       });
       const data = (await res.json()) as unknown;
       if (!res.ok) throw new Error(parseApiError(data, res.status));
+      if (
+        typeof data === "object" &&
+        data &&
+        "ignored" in data &&
+        (data as { ignored?: boolean }).ignored
+      ) {
+        setEngineError("信号已忽略（已有持仓或当前非 IDLE）");
+      }
       await fetchStatus();
       await fetchCopierEvents();
     } catch (e) {
-      setEngineError(e instanceof Error ? e.message : "触发信号失败");
+      setEngineError(e instanceof Error ? e.message : "发送信号失败");
     } finally {
       setEngineBusy(false);
     }
@@ -342,36 +346,36 @@ export default function Home() {
           持续运行引擎
         </h2>
         <p className="mb-4 text-xs text-oo-text-muted">
-          Start 后每 2s 拉取 Dexscreener 实时价用于判断是否触发止盈/止损。手动开仓：止损为开仓价
-          −1/10000，止盈为开仓价 +2/10000。仅在 IDLE 时可「按此价开仓」。
+          默认 <span className="text-oo-text-secondary">MANUAL</span>：不跑内部策略，只响应外部{" "}
+          <code className="text-oo-text">BUY</code> /{" "}
+          <code className="text-oo-text">SELL</code>。信号后进入{" "}
+          <code className="text-oo-text">WAITING_ENTRY</code>，下一 tick 用 Dexscreener
+          现价开仓；多/空对应 ±1/10000 止损、±2/10000 止盈。有持仓时重复信号会被忽略。
         </p>
-        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end">
-          <div className="flex flex-1 flex-col gap-1">
-            <label className="text-xs text-oo-text-muted">
-              开仓价 (USD)
-            </label>
-            <input
-              value={signalPriceInput}
-              onChange={(e) => setSignalPriceInput(e.target.value)}
-              placeholder={
-                engineStatus?.currentPrice != null
-                  ? String(engineStatus.currentPrice.toFixed(2))
-                  : "例如当前价"
-              }
-              className="w-full max-w-xs rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 font-mono text-sm text-oo-text outline-none placeholder:text-oo-text-muted focus:border-oo-primary focus:ring-1 focus:ring-oo-primary"
-            />
-          </div>
+        <div className="mb-4 flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={sendManualSignal}
+            onClick={() => void sendCopierSignal("BUY")}
             disabled={
               engineBusy ||
               !engineStatus?.running ||
               engineStatus.state !== "IDLE"
             }
-            className="rounded-lg border border-oo-border-strong px-4 py-2 text-sm text-oo-text-secondary transition hover:bg-oo-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg bg-oo-success px-5 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            按此价开仓
+            BUY
+          </button>
+          <button
+            type="button"
+            onClick={() => void sendCopierSignal("SELL")}
+            disabled={
+              engineBusy ||
+              !engineStatus?.running ||
+              engineStatus.state !== "IDLE"
+            }
+            className="rounded-lg bg-oo-error px-5 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            SELL
           </button>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -422,8 +426,18 @@ export default function Home() {
               <dd className="font-mono text-oo-text">{String(engineStatus.running)}</dd>
             </div>
             <div>
+              <dt className="text-xs text-oo-text-muted">mode</dt>
+              <dd className="font-mono text-oo-text">{engineStatus.mode}</dd>
+            </div>
+            <div>
               <dt className="text-xs text-oo-text-muted">state</dt>
               <dd className="font-mono text-oo-text">{engineStatus.state}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-oo-text-muted">pendingSignal</dt>
+              <dd className="font-mono text-oo-text">
+                {engineStatus.pendingSignalType ?? "—"}
+              </dd>
             </div>
             <div>
               <dt className="text-xs text-oo-text-muted">tickCount</dt>
