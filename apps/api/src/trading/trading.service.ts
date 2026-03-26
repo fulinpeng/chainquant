@@ -1,13 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import type { MarketCandle } from "../market/market.service";
-
-type MockSignal = {
-  time: number;
-  price: number;
-};
+import type { Signal } from "../signal/signal.service";
 
 type PendingEntry = {
-  signal: MockSignal;
+  signal: Signal;
   entryPrice: number;
   expiresAtIndex: number; // inclusive index
 };
@@ -63,16 +59,22 @@ function maybeCloseLong(candle: MarketCandle, pos: Position) {
 
 @Injectable()
 export class TradingService {
-  run(candles: MarketCandle[]): TradingBacktestResponse {
+  run(candles: MarketCandle[], signals: Signal[]): TradingBacktestResponse {
     const trades: TradeRecord[] = [];
 
     const atrPeriod = 14;
-    const signalEvery = 50;
     const delayPct = 0.03;
     const entryTimeoutBars = 20;
 
     let pending: PendingEntry | null = null;
     let position: Position | null = null;
+
+    const signalsByTime = new Map<number, Signal[]>();
+    for (const s of signals) {
+      const list = signalsByTime.get(s.time);
+      if (list) list.push(s);
+      else signalsByTime.set(s.time, [s]);
+    }
 
     for (let i = 0; i < candles.length; i++) {
       const candle = candles[i];
@@ -116,16 +118,19 @@ export class TradingService {
         }
       }
 
-      // 3) Generate mock signal every 50 candles.
-      // Only generate when there is no position and no pending entry to avoid stacking signals.
-      if (!position && !pending && i > 0 && i % signalEvery === 0) {
-        const signal: MockSignal = { time: candle.time, price: candle.close };
-        const entryPrice = signal.price * (1 - delayPct);
-        pending = {
-          signal,
-          entryPrice,
-          expiresAtIndex: i + entryTimeoutBars,
-        };
+      // 3) Consume signals when candle.time matches.
+      // Keep the original behavior: only react when there is no position and no pending entry.
+      if (!position && !pending) {
+        const list = signalsByTime.get(candle.time);
+        const signal = list?.find((s) => s.type === "BUY");
+        if (signal) {
+          const entryPrice = signal.price * (1 - delayPct);
+          pending = {
+            signal,
+            entryPrice,
+            expiresAtIndex: i + entryTimeoutBars,
+          };
+        }
       }
     }
 

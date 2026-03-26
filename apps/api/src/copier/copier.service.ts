@@ -1,11 +1,13 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { MarketService } from "../market/market.service";
+import { SignalService } from "../signal/signal.service";
 import { TradingService } from "../trading/trading.service";
 
 @Injectable()
 export class CopierService {
   constructor(
     private readonly marketService: MarketService,
+    private readonly signalService: SignalService,
     private readonly tradingService: TradingService,
   ) {}
 
@@ -26,7 +28,8 @@ export class CopierService {
       throw new BadRequestException("Not enough candles to run backtest");
     }
 
-    return this.tradingService.run(candles);
+    const signals = this.signalService.generateSignals(candles);
+    return this.tradingService.run(candles, signals);
   }
 }
 
