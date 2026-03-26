@@ -25,12 +25,30 @@ function shortAddress(addr: string) {
 }
 
 export default function WalletHeader() {
-  const { isConnected, address, chainId, connect, disconnect, switchChain } = useWallet();
+  const {
+    isConnected,
+    address,
+    chainId,
+    connect,
+    disconnect,
+    switchChain,
+    balanceFormatted,
+    balanceSymbol,
+    isBalanceLoading,
+  } = useWallet();
   const [chainOpen, setChainOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
 
   const currentChain = CHAIN_OPTIONS.find((c) => c.id === chainId) ?? CHAIN_OPTIONS[0];
   const explorerUrl = `${currentChain.explorer}${address ?? ""}`;
+  const balanceText = useMemo(() => {
+    if (!isConnected) return "--";
+    if (isBalanceLoading) return "...";
+    if (!balanceFormatted) return "--";
+    const value = Number(balanceFormatted);
+    if (!Number.isFinite(value)) return "--";
+    return `${value.toFixed(4)} ${balanceSymbol ?? ""}`.trim();
+  }, [isConnected, isBalanceLoading, balanceFormatted, balanceSymbol]);
 
   const walletButton = useMemo(() => {
     if (!isConnected) {
@@ -107,59 +125,79 @@ export default function WalletHeader() {
       </header>
 
       {accountOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-oo-border bg-oo-surface p-5 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-2xl font-semibold text-oo-text">Account Overview</h3>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
+          onClick={() => setAccountOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-oo-border bg-oo-surface p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 flex items-center justify-between">
+              <h3 className="text-2xl font-semibold leading-none text-oo-text">Account Overview</h3>
               <button
                 type="button"
                 onClick={() => setAccountOpen(false)}
-                className="rounded-full border border-oo-border-strong px-2 py-1 text-sm text-oo-text-muted hover:bg-oo-surface-hover"
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-oo-border-strong text-lg text-oo-text-muted transition hover:bg-oo-surface-hover hover:text-oo-text"
+                aria-label="关闭"
               >
                 ✕
               </button>
             </div>
 
-            <div className="rounded-xl border border-oo-border bg-oo-bg p-4">
-              <div className="mb-4 break-all font-mono text-sm text-oo-text-secondary">
-                {address ?? "--"}
+            <div className="rounded-2xl border border-oo-border bg-oo-bg px-4 py-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="truncate pr-1 font-mono text-2xl font-semibold leading-none text-oo-text-muted">
+                    {address ? shortAddress(address).replace("**", "****") : "--"}
+                  </div>
+                  <button
+                    type="button"
+                    title="区块浏览器"
+                    onClick={() => window.open(explorerUrl, "_blank", "noopener,noreferrer")}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-oo-text-muted transition hover:bg-oo-surface-hover hover:text-oo-text"
+                    aria-label="区块浏览器"
+                  >
+                    ↗
+                  </button>
+                </div>
+                <div className="ml-auto flex items-center gap-2 text-oo-text-muted">
+                  <button
+                    type="button"
+                    title="复制地址"
+                    onClick={() => navigator.clipboard.writeText(address ?? "")}
+                    className="flex h-8 w-8 items-center justify-center rounded-md transition hover:bg-oo-surface-hover hover:text-oo-text"
+                    aria-label="复制地址"
+                  >
+                    ⧉
+                  </button>
+                  <button
+                    type="button"
+                    title="切换钱包"
+                    onClick={() => {
+                      disconnect();
+                      connect();
+                    }}
+                    className="flex h-8 w-8 items-center justify-center rounded-md transition hover:bg-oo-surface-hover hover:text-oo-text"
+                    aria-label="切换钱包"
+                  >
+                    ⇄
+                  </button>
+                  <button
+                    type="button"
+                    title="退出登录"
+                    onClick={() => {
+                      disconnect();
+                      setAccountOpen(false);
+                    }}
+                    className="flex h-8 w-8 items-center justify-center rounded-md transition hover:bg-oo-surface-hover hover:text-oo-text"
+                    aria-label="退出登录"
+                  >
+                    ⇥
+                  </button>
+                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => window.open(explorerUrl, "_blank", "noopener,noreferrer")}
-                  className="rounded-lg border border-oo-border-strong px-3 py-2 text-sm text-oo-text-secondary hover:bg-oo-surface-hover"
-                >
-                  区块浏览器
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigator.clipboard.writeText(address ?? "")}
-                  className="rounded-lg border border-oo-border-strong px-3 py-2 text-sm text-oo-text-secondary hover:bg-oo-surface-hover"
-                >
-                  复制地址
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    disconnect();
-                    connect();
-                  }}
-                  className="rounded-lg border border-oo-border-strong px-3 py-2 text-sm text-oo-text-secondary hover:bg-oo-surface-hover"
-                >
-                  切换钱包
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    disconnect();
-                    setAccountOpen(false);
-                  }}
-                  className="rounded-lg border border-oo-border-strong px-3 py-2 text-sm text-oo-error hover:bg-oo-surface-hover"
-                >
-                  退出
-                </button>
-              </div>
+              <div className="text-center text-3xl font-semibold text-[#ff7a1a]">{balanceText}</div>
             </div>
           </div>
         </div>
