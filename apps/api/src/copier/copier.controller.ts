@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import { CopierService } from "./copier.service";
 import { EngineService } from "../engine/engine.service";
-import { EventService } from "../event/event.service";
+import { StateStore } from "../state/state-store.service";
 
 type CopierRunBody = {
   address: string;
@@ -23,7 +23,7 @@ export class CopierController {
   constructor(
     private readonly copierService: CopierService,
     private readonly engineService: EngineService,
-    private readonly eventService: EventService,
+    private readonly stateStore: StateStore,
   ) {}
 
   @Post("run")
@@ -56,7 +56,9 @@ export class CopierController {
 
   @Get("events")
   events() {
-    return { events: this.eventService.getRecentEvents(20) };
+    const events = this.stateStore.getEvents();
+    const tail = events.slice(-20);
+    return { events: tail };
   }
 
   @Post("signal")

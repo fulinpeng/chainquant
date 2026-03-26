@@ -3,7 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { WagmiProvider } from "wagmi";
-import { wagmiConfig } from "@/wagmi";
+import { wagmiConfig } from "@/utils/wagmi";
 
 export function Web3Provider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());

@@ -5,27 +5,19 @@ import {
 } from "@nestjs/common";
 import type { MarketCandle } from "../market/market.service";
 import { MarketService } from "../market/market.service";
-import { EventService } from "../event/event.service";
-import type { TradeRecord } from "../trading/trading.service";
+import { createEntityId } from "../domain/id";
+import type { Position } from "../domain/position";
+import type { Signal as DomainSignal } from "../domain/signal";
+import type { Trade } from "../domain/trade";
+import { StateStore } from "../state/state-store.service";
 
 export type EngineMode = "MANUAL" | "AUTO";
 
-export type Signal = {
+export type CopierSignalPayload = {
   type: "BUY" | "SELL";
 };
 
 export type EngineState = "IDLE" | "WAITING_ENTRY" | "IN_POSITION";
-
-export type PositionSide = "LONG" | "SHORT";
-
-export type EnginePosition = {
-  side: PositionSide;
-  entryTime: number;
-  entryPrice: number;
-  stopLoss: number;
-  takeProfit: number;
-  status: "OPEN";
-};
 
 export type EngineStatusDto = {
   running: boolean;
@@ -36,7 +28,7 @@ export type EngineStatusDto = {
   entryPrice: number | null;
   /** WAITING_ENTRY: which external signal is pending. */
   pendingSignalType: "BUY" | "SELL" | null;
-  position: EnginePosition | null;
+  position: Position | null;
   tickCount: number;
   lastUpdateTime: number;
   /** Engine loop tick index at last EXIT; null if never exited this session. */
@@ -51,7 +43,7 @@ export type EngineStatusDto = {
 export type OnSignalResult = { ok: true } | { ok: true; ignored: true };
 
 export type EngineResultDto = {
-  trades: TradeRecord[];
+  trades: Trade[];
   stats: {
     totalTrades: number;
     winRate: number;
@@ -89,18 +81,13 @@ export class EngineService {
   private tickCount = 0;
   private currentPrice: number | null = null;
 
-  private pendingSignal: Signal | null = null;
-  private currentPosition: EnginePosition | null = null;
-
-  private trades: TradeRecord[] = [];
-
   private lastUpdateTime = 0;
   /** Set to `tickCount` on each EXIT (FSM cooldown). */
   private lastExitTick: number | null = null;
 
   constructor(
     private readonly marketService: MarketService,
-    private readonly eventService: EventService,
+    private readonly stateStore: StateStore,
   ) {}
 
   start(address: string): { ok: true } {
@@ -125,13 +112,11 @@ export class EngineService {
     this.candles = candles;
     this.mode = "MANUAL";
     this.state = "IDLE";
-    this.pendingSignal = null;
     this.tickCount = 0;
     this.currentPrice = null;
-    this.currentPosition = null;
-    this.trades = [];
     this.lastUpdateTime = Date.now();
     this.lastExitTick = null;
+    this.stateStore.resetTradingState();
 
     this.running = true;
     this.loopPromise = this.runLoop();
@@ -142,7 +127,7 @@ export class EngineService {
   /**
    * External signal injection. Only accepted in IDLE and outside post-exit cooldown.
    */
-  onSignal(signal: Signal): OnSignalResult {
+  onSignal(signal: CopierSignalPayload): OnSignalResult {
     if (!this.running) {
       throw new BadRequestException("Engine is not running");
     }
@@ -151,7 +136,7 @@ export class EngineService {
     }
 
     if (this.state !== "IDLE") {
-      this.eventService.addEvent({
+      this.stateStore.addEvent({
         type: "INVALID_SIGNAL",
         message: "Signal ignored due to state",
       });
@@ -163,16 +148,24 @@ export class EngineService {
       this.tickCount - this.lastExitTick < COOLDOWN_CANDLES
     ) {
       const need = COOLDOWN_CANDLES - (this.tickCount - this.lastExitTick);
-      this.eventService.addEvent({
+      this.stateStore.addEvent({
         type: "COOLDOWN_BLOCK",
         message: `Cooldown active; need ~${need} more tick(s) (cooldown=${COOLDOWN_CANDLES})`,
       });
       return { ok: true, ignored: true };
     }
 
-    this.pendingSignal = signal;
+    const token = this.address ?? "";
+    const domainSignal: DomainSignal = {
+      id: createEntityId(),
+      token,
+      type: signal.type,
+      price: this.currentPrice ?? 0,
+      createdAt: Date.now(),
+    };
+    this.stateStore.setSignal(domainSignal);
     this.state = "WAITING_ENTRY";
-    this.eventService.addEvent({
+    this.stateStore.addEvent({
       type: "SIGNAL",
       message: signal.type,
     });
@@ -182,12 +175,12 @@ export class EngineService {
 
   async stop(): Promise<{ ok: true }> {
     this.running = false;
-    this.pendingSignal = null;
+    this.stateStore.setSignal(null);
     if (this.state === "WAITING_ENTRY") {
       this.state = "IDLE";
     }
-    this.eventService.addEvent({
-      type: "STOP",
+    this.stateStore.addEvent({
+      type: "ERROR",
       message: "Engine stop requested",
     });
     if (this.loopPromise) {
@@ -199,15 +192,13 @@ export class EngineService {
   }
 
   getStatus(): EngineStatusDto {
+    const position = this.stateStore.getPosition();
     const entryPrice =
-      this.state === "IN_POSITION" && this.currentPosition
-        ? this.currentPosition.entryPrice
-        : null;
+      this.state === "IN_POSITION" && position ? position.entryPrice : null;
 
+    const pending = this.stateStore.getSignal();
     const pendingSignalType =
-      this.state === "WAITING_ENTRY" && this.pendingSignal
-        ? this.pendingSignal.type
-        : null;
+      this.state === "WAITING_ENTRY" && pending ? pending.type : null;
 
     const cooldownTicksRemaining =
       this.lastExitTick === null
@@ -221,7 +212,8 @@ export class EngineService {
       currentPrice: this.currentPrice,
       entryPrice,
       pendingSignalType,
-      position: this.currentPosition,
+      position:
+        this.state === "IN_POSITION" ? position : null,
       tickCount: this.tickCount,
       lastUpdateTime: this.lastUpdateTime,
       lastExitTick: this.lastExitTick,
@@ -232,13 +224,14 @@ export class EngineService {
   }
 
   getResult(): EngineResultDto {
-    const totalTrades = this.trades.length;
-    const wins = this.trades.filter((t) => t.profit > 0).length;
-    const totalPnL = this.trades.reduce((sum, t) => sum + t.profit, 0);
+    const trades = this.stateStore.getTrades();
+    const totalTrades = trades.length;
+    const wins = trades.filter((t) => t.pnl > 0).length;
+    const totalPnL = trades.reduce((sum, t) => sum + t.pnl, 0);
     const winRate = totalTrades ? wins / totalTrades : 0;
 
     return {
-      trades: [...this.trades],
+      trades: [...trades],
       stats: {
         totalTrades,
         winRate,
@@ -256,8 +249,8 @@ export class EngineService {
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           this.logger.warn(`getLatestPrice failed: ${msg}`);
-          this.eventService.addEvent({
-            type: "ERROR_FETCH_PRICE",
+          this.stateStore.addEvent({
+            type: "ERROR",
             message: msg,
           });
           this.lastUpdateTime = Date.now();
@@ -277,7 +270,8 @@ export class EngineService {
             break;
           }
           case "WAITING_ENTRY": {
-            if (!this.pendingSignal) {
+            const pendingSignal = this.stateStore.getSignal();
+            if (!pendingSignal) {
               this.state = "IDLE";
               break;
             }
@@ -286,47 +280,53 @@ export class EngineService {
             }
 
             const entryPrice = livePrice;
-            const sig = this.pendingSignal;
+            const sig = pendingSignal;
+            const token = this.address ?? "";
 
             if (sig.type === "BUY") {
               const stopLoss = entryPrice * (1 - MANUAL_SL_FRACTION);
               const takeProfit = entryPrice * (1 + MANUAL_TP_FRACTION);
-              this.currentPosition = {
+              this.stateStore.setPosition({
+                id: createEntityId(),
+                token,
                 side: "LONG",
                 entryTime: tSec,
                 entryPrice,
                 stopLoss,
                 takeProfit,
                 status: "OPEN",
-              };
+              });
             } else {
               const stopLoss = entryPrice * (1 + MANUAL_SL_FRACTION);
               const takeProfit = entryPrice * (1 - MANUAL_TP_FRACTION);
-              this.currentPosition = {
+              this.stateStore.setPosition({
+                id: createEntityId(),
+                token,
                 side: "SHORT",
                 entryTime: tSec,
                 entryPrice,
                 stopLoss,
                 takeProfit,
                 status: "OPEN",
-              };
+              });
             }
 
-            this.eventService.addEvent({
+            const opened = this.stateStore.getPosition();
+            this.stateStore.addEvent({
               type: "ENTRY",
               price: entryPrice,
-              message: `${sig.type} @ market (${this.currentPosition.side})`,
+              message: `${sig.type} @ market (${opened?.side})`,
             });
-            this.pendingSignal = null;
+            this.stateStore.setSignal(null);
             this.state = "IN_POSITION";
             break;
           }
           case "IN_POSITION": {
-            if (!this.currentPosition) {
+            const pos = this.stateStore.getPosition();
+            if (!pos) {
               this.state = "IDLE";
               break;
             }
-            const pos = this.currentPosition;
 
             if (pos.side === "LONG") {
               if (livePrice <= pos.stopLoss) {
@@ -358,8 +358,8 @@ export class EngineService {
       }
     } catch (err) {
       this.logger.error("Engine loop error", err);
-      this.eventService.addEvent({
-        type: "ERROR_FETCH_PRICE",
+      this.stateStore.addEvent({
+        type: "ERROR",
         message: `Engine loop crashed: ${err instanceof Error ? err.message : String(err)}`,
       });
       this.lastUpdateTime = Date.now();
@@ -368,28 +368,35 @@ export class EngineService {
   }
 
   private pushTradeAndReset(
-    pos: EnginePosition,
+    pos: Position,
     exitTime: number,
     exitPrice: number,
     reason: "stop_loss" | "take_profit",
   ) {
-    this.eventService.addEvent({
+    this.stateStore.addEvent({
       type: "EXIT",
       price: exitPrice,
       message: `${reason} (${pos.side})`,
     });
-    const profit =
+    const pnl =
       pos.side === "LONG"
         ? exitPrice - pos.entryPrice
         : pos.entryPrice - exitPrice;
-    this.trades.push({
+    const trade: Trade = {
+      id: createEntityId(),
+      token: pos.token,
+      side: pos.side,
       entryTime: pos.entryTime,
       entryPrice: pos.entryPrice,
       exitTime,
       exitPrice,
-      profit,
-    });
-    this.currentPosition = null;
+      stopLoss: pos.stopLoss,
+      takeProfit: pos.takeProfit,
+      pnl,
+      status: "CLOSED",
+    };
+    this.stateStore.addTrade(trade);
+    this.stateStore.setPosition(null);
     this.state = "IDLE";
     this.lastExitTick = this.tickCount;
   }
