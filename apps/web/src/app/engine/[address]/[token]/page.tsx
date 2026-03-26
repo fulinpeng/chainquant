@@ -35,12 +35,13 @@ type Trade = {
   side: "LONG" | "SHORT";
   entryTime: number;
   entryPrice: number;
-  exitTime: number;
-  exitPrice: number;
+  size: number;
+  exitTime: number | null;
+  exitPrice: number | null;
   stopLoss: number;
   takeProfit: number;
-  pnl: number;
-  status: "CLOSED";
+  pnl: number | null;
+  status: "OPEN" | "CLOSED";
 };
 
 type EngineDetail = {
@@ -49,6 +50,15 @@ type EngineDetail = {
   trades: Trade[];
   events: EngineEvent[];
   currentPrice: number | null;
+  entryPrice: number | null;
+  pendingSignalType: "BUY" | "SELL" | null;
+  tickCount: number;
+  lastUpdateTime: number;
+  lastExitTick: number | null;
+  cooldownCandles: number;
+  cooldownTicksRemaining: number;
+  running: boolean;
+  mode: "MANUAL" | "AUTO";
 };
 
 function formatTimeMs(ms: number) {
@@ -156,6 +166,45 @@ export default function EngineDetailPage({
               {fmtNum(data?.currentPrice)}
             </dd>
           </div>
+          <div>
+            <dt className="text-xs text-oo-text-muted">running</dt>
+            <dd className="font-mono text-oo-text">{String(data?.running ?? false)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-oo-text-muted">mode</dt>
+            <dd className="font-mono text-oo-text">{data?.mode ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-oo-text-muted">entryPrice（持仓开仓价）</dt>
+            <dd className="font-mono text-oo-text">
+              {fmtNum(data?.entryPrice)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-oo-text-muted">pendingSignal</dt>
+            <dd className="font-mono text-oo-text">{data?.pendingSignalType ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-oo-text-muted">tickCount</dt>
+            <dd className="font-mono text-oo-text">{data?.tickCount ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-oo-text-muted">lastUpdateTime</dt>
+            <dd className="font-mono text-oo-text">
+              {data?.lastUpdateTime ? formatTimeMs(data.lastUpdateTime) : "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-oo-text-muted">lastExitTick</dt>
+            <dd className="font-mono text-oo-text">{data?.lastExitTick ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-oo-text-muted">cooldown</dt>
+            <dd className="font-mono text-oo-text">
+              {data?.cooldownCandles ?? "—"} ticks · 剩余{" "}
+              {data?.cooldownTicksRemaining ?? 0}
+            </dd>
+          </div>
         </dl>
       </section>
 
@@ -178,6 +227,7 @@ export default function EngineDetailPage({
               <tr>
                 <th className="px-3 py-2 font-medium">side</th>
                 <th className="px-3 py-2 font-medium">entry</th>
+                <th className="px-3 py-2 font-medium">size</th>
                 <th className="px-3 py-2 font-medium">exit</th>
                 <th className="px-3 py-2 font-medium">pnl</th>
               </tr>
@@ -185,7 +235,7 @@ export default function EngineDetailPage({
             <tbody className="divide-y divide-oo-border text-oo-text-secondary">
               {(data?.trades ?? []).length === 0 ? (
                 <tr>
-                  <td className="px-3 py-4 text-oo-text-muted" colSpan={4}>
+                  <td className="px-3 py-4 text-oo-text-muted" colSpan={5}>
                     暂无 trades
                   </td>
                 </tr>
@@ -199,14 +249,21 @@ export default function EngineDetailPage({
                       {t.entryPrice.toFixed(4)}
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-oo-text">
-                      {t.exitPrice.toFixed(4)}
+                      {fmtNum(t.size)}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
+                      {t.exitPrice == null ? "--" : t.exitPrice.toFixed(4)}
                     </td>
                     <td
                       className={`px-3 py-2 font-mono text-xs ${
-                        t.pnl >= 0 ? "text-oo-success" : "text-oo-error"
+                        t.pnl == null
+                          ? "text-oo-text-muted"
+                          : t.pnl >= 0
+                            ? "text-oo-success"
+                            : "text-oo-error"
                       }`}
                     >
-                      {t.pnl.toFixed(4)}
+                      {t.pnl == null ? "--" : t.pnl.toFixed(4)}
                     </td>
                   </tr>
                 ))

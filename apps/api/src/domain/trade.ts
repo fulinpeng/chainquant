@@ -6,10 +6,11 @@ export type Trade = {
   side: TradeSide;
   entryTime: number;
   entryPrice: number;
-  exitTime: number;
-  exitPrice: number;
+  size: number;
+  exitTime: number | null;
+  exitPrice: number | null;
   stopLoss: number;
   takeProfit: number;
-  pnl: number;
-  status: "CLOSED";
+  pnl: number | null;
+  status: "OPEN" | "CLOSED";
 };

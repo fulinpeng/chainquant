@@ -21,6 +21,8 @@ function fmtNum(n: number | undefined) {
 export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [inputAddress, setInputAddress] = useState("");
+  const [inputToken, setInputToken] = useState("");
+  const [inputPrice, setInputPrice] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [engineList, setEngineList] = useState<EngineListItem[]>([]);
@@ -64,25 +66,35 @@ export default function Home() {
     };
   }, [fetchEngineList]);
 
-  async function addAddress() {
+  async function sendTestSignal() {
     const addr = inputAddress.trim();
+    const token = inputToken.trim();
+    const price = Number(inputPrice);
     setError(null);
     if (!addr) {
       setError("请输入 address");
       return;
     }
+    if (!token) {
+      setError("请输入 token");
+      return;
+    }
+    if (!Number.isFinite(price) || price <= 0) {
+      setError("请输入有效 price");
+      return;
+    }
     setBusy(true);
     try {
-      const res = await fetch(`${apiBaseUrl}/engine/add-address`, {
+      const res = await fetch(`${apiBaseUrl}/engine/signal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: addr }),
+        body: JSON.stringify({ address: addr, token, price }),
       });
       const data = (await res.json()) as unknown;
       if (!res.ok) throw new Error(parseApiError(data, res.status));
       await fetchEngineList();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "添加失败");
+      setError(e instanceof Error ? e.message : "发送信号失败");
     } finally {
       setBusy(false);
     }
@@ -102,9 +114,9 @@ export default function Home() {
 
       <section className="rounded-xl border border-oo-border bg-oo-surface p-5 shadow-sm">
         <h2 className="mb-3 text-sm font-semibold text-oo-text">
-          添加 address（/engine/add-address）
+          最小测试入口（/engine/signal）
         </h2>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <div className="grid gap-2 md:grid-cols-3">
           <label className="flex flex-1 flex-col gap-1 text-xs text-oo-text-muted">
             Address
             <input
@@ -114,13 +126,33 @@ export default function Home() {
               className="w-full rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 font-mono text-sm text-oo-text outline-none placeholder:text-oo-text-muted focus:border-oo-primary focus:ring-1 focus:ring-oo-primary"
             />
           </label>
+          <label className="flex flex-1 flex-col gap-1 text-xs text-oo-text-muted">
+            Token
+            <input
+              value={inputToken}
+              onChange={(e) => setInputToken(e.target.value)}
+              placeholder="0x token..."
+              className="w-full rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 font-mono text-sm text-oo-text outline-none placeholder:text-oo-text-muted focus:border-oo-primary focus:ring-1 focus:ring-oo-primary"
+            />
+          </label>
+          <label className="flex flex-1 flex-col gap-1 text-xs text-oo-text-muted">
+            Price
+            <input
+              value={inputPrice}
+              onChange={(e) => setInputPrice(e.target.value)}
+              placeholder="例如 3200.5"
+              className="w-full rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 font-mono text-sm text-oo-text outline-none placeholder:text-oo-text-muted focus:border-oo-primary focus:ring-1 focus:ring-oo-primary"
+            />
+          </label>
+        </div>
+        <div className="mt-2">
           <button
             type="button"
-            onClick={() => void addAddress()}
+            onClick={() => void sendTestSignal()}
             disabled={busy}
             className="rounded-lg bg-oo-primary px-5 py-2.5 text-sm font-medium text-white transition hover:bg-oo-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Add
+            发送测试信号（BUY）
           </button>
         </div>
         {error && <p className="mt-3 text-sm text-oo-error">{error}</p>}
@@ -156,7 +188,7 @@ export default function Home() {
               {engineList.length === 0 ? (
                 <tr>
                   <td className="px-3 py-4 text-oo-text-muted" colSpan={7}>
-                    暂无 Engine；请先 Add address。
+                    暂无 Engine；请先发送测试信号。
                   </td>
                 </tr>
               ) : (

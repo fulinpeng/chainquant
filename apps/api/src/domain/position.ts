@@ -6,6 +6,7 @@ export type Position = {
   side: TradeSide;
   entryTime: number;
   entryPrice: number;
+  size: number;
   stopLoss: number;
   takeProfit: number;
   status: "OPEN";

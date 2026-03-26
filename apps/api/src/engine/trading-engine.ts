@@ -28,6 +28,10 @@ function nowUnixSec(): number {
 export class TradingEngine {
   private readonly logger: Logger;
   private readonly stateStore = new StateStore();
+  private readonly account = {
+    balance: 10000,
+    riskPerTrade: 0.01,
+  };
 
   private running = false;
   private candles: MarketCandle[] = [];
@@ -181,12 +185,14 @@ export class TradingEngine {
           if (sig.type === "BUY") {
             const stopLoss = entryPrice * (1 - MANUAL_SL_FRACTION);
             const takeProfit = entryPrice * (1 + MANUAL_TP_FRACTION);
+            const size = this.computePositionSize(entryPrice, stopLoss);
             this.stateStore.setPosition({
               id: createEntityId(),
               token: this.token,
               side: "LONG",
               entryTime: tSec,
               entryPrice,
+              size,
               stopLoss,
               takeProfit,
               status: "OPEN",
@@ -194,12 +200,14 @@ export class TradingEngine {
           } else {
             const stopLoss = entryPrice * (1 + MANUAL_SL_FRACTION);
             const takeProfit = entryPrice * (1 - MANUAL_TP_FRACTION);
+            const size = this.computePositionSize(entryPrice, stopLoss);
             this.stateStore.setPosition({
               id: createEntityId(),
               token: this.token,
               side: "SHORT",
               entryTime: tSec,
               entryPrice,
+              size,
               stopLoss,
               takeProfit,
               status: "OPEN",
@@ -212,6 +220,22 @@ export class TradingEngine {
             price: entryPrice,
             message: `${sig.type} @ market (${opened?.side})`,
           });
+          if (opened) {
+            this.stateStore.addTrade({
+              id: createEntityId(),
+              token: opened.token,
+              side: opened.side,
+              entryTime: opened.entryTime,
+              entryPrice: opened.entryPrice,
+              size: opened.size,
+              exitTime: null,
+              exitPrice: null,
+              stopLoss: opened.stopLoss,
+              takeProfit: opened.takeProfit,
+              pnl: null,
+              status: "OPEN",
+            });
+          }
           this.stateStore.setSignal(null);
           this.state = "IN_POSITION";
           break;
@@ -294,9 +318,10 @@ export class TradingEngine {
   getResult(): EngineResultDto {
     const trades = this.stateStore.getTrades();
     const totalTrades = trades.length;
-    const wins = trades.filter((t) => t.pnl > 0).length;
-    const totalPnL = trades.reduce((sum, t) => sum + t.pnl, 0);
-    const winRate = totalTrades ? wins / totalTrades : 0;
+    const closed = trades.filter((t) => t.status === "CLOSED" && t.pnl !== null);
+    const wins = closed.filter((t) => (t.pnl ?? 0) > 0).length;
+    const totalPnL = closed.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+    const winRate = closed.length ? wins / closed.length : 0;
 
     return {
       trades: [...trades],
@@ -327,24 +352,47 @@ export class TradingEngine {
     });
     const pnl =
       pos.side === "LONG"
-        ? exitPrice - pos.entryPrice
-        : pos.entryPrice - exitPrice;
-    const trade: Trade = {
-      id: createEntityId(),
-      token: pos.token,
-      side: pos.side,
-      entryTime: pos.entryTime,
-      entryPrice: pos.entryPrice,
-      exitTime,
-      exitPrice,
-      stopLoss: pos.stopLoss,
-      takeProfit: pos.takeProfit,
-      pnl,
-      status: "CLOSED",
-    };
-    this.stateStore.addTrade(trade);
+        ? (exitPrice - pos.entryPrice) * pos.size
+        : (pos.entryPrice - exitPrice) * pos.size;
+    const openTrade = this.stateStore
+      .getTrades()
+      .find((t) => t.status === "OPEN" && t.entryTime === pos.entryTime && t.token === pos.token);
+    if (openTrade) {
+      this.stateStore.updateTrade(openTrade.id, {
+        exitTime,
+        exitPrice,
+        pnl,
+        status: "CLOSED",
+      });
+    } else {
+      // Fallback for robustness if OPEN trade record is missing.
+      const trade: Trade = {
+        id: createEntityId(),
+        token: pos.token,
+        side: pos.side,
+        entryTime: pos.entryTime,
+        entryPrice: pos.entryPrice,
+        size: pos.size,
+        exitTime,
+        exitPrice,
+        stopLoss: pos.stopLoss,
+        takeProfit: pos.takeProfit,
+        pnl,
+        status: "CLOSED",
+      };
+      this.stateStore.addTrade(trade);
+    }
     this.stateStore.setPosition(null);
     this.state = "IDLE";
     this.lastExitTick = this.tickCount;
+  }
+
+  private computePositionSize(entryPrice: number, stopLoss: number): number {
+    const riskAmount = this.account.balance * this.account.riskPerTrade;
+    const stopLossDistance = Math.abs(entryPrice - stopLoss);
+    if (!Number.isFinite(stopLossDistance) || stopLossDistance <= 0) {
+      return 0;
+    }
+    return riskAmount / stopLossDistance;
   }
 }

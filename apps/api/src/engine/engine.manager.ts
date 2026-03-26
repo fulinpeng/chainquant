@@ -90,6 +90,15 @@ export class EngineManager implements OnModuleDestroy {
     trades: ReturnType<TradingEngine["getResult"]>["trades"];
     events: ReturnType<TradingEngine["getRecentEvents"]>;
     currentPrice: number | null;
+    entryPrice: number | null;
+    pendingSignalType: EngineStatusDto["pendingSignalType"];
+    tickCount: number;
+    lastUpdateTime: number;
+    lastExitTick: number | null;
+    cooldownCandles: number;
+    cooldownTicksRemaining: number;
+    running: EngineStatusDto["running"];
+    mode: EngineStatusDto["mode"];
   } {
     const engine = this.getEngineOrThrow(address, token);
     const status = engine.getStatus();
@@ -101,6 +110,15 @@ export class EngineManager implements OnModuleDestroy {
       trades: result.trades,
       events,
       currentPrice: status.currentPrice,
+      entryPrice: status.entryPrice,
+      pendingSignalType: status.pendingSignalType,
+      tickCount: status.tickCount,
+      lastUpdateTime: status.lastUpdateTime,
+      lastExitTick: status.lastExitTick,
+      cooldownCandles: status.cooldownCandles,
+      cooldownTicksRemaining: status.cooldownTicksRemaining,
+      running: status.running,
+      mode: status.mode,
     };
   }
 
@@ -108,9 +126,6 @@ export class EngineManager implements OnModuleDestroy {
     const a = (address ?? "").trim();
     if (!a) throw new BadRequestException("address is required");
     this.watchedAddresses.add(a);
-    // MVP: we don't yet have on-chain token detection. Create a placeholder engine
-    // keyed by (address, token=address) so it shows up in /engine/list.
-    this.getOrCreateEngine(a, a);
     return { ok: true };
   }
 
@@ -122,9 +137,20 @@ export class EngineManager implements OnModuleDestroy {
     address: string,
     signal: CopierSignalPayload & { token?: string },
   ): OnSignalResult {
-    const token = (signal.token ?? address).trim();
-    const engine = this.getEngineOrThrow(address.trim(), token);
-    return engine.onSignal({ type: signal.type });
+    const a = address.trim();
+    const token = (signal.token ?? a).trim();
+    if (!a || !token) {
+      throw new BadRequestException("address and token are required");
+    }
+    const engine = this.getOrCreateEngine(a, token);
+    if (!engine.isRunning()) {
+      engine.start();
+      this.notifyEngineStarted();
+    }
+    return engine.onSignal({
+      type: signal.type,
+      price: signal.price,
+    });
   }
 
   /**
@@ -148,12 +174,11 @@ export class EngineManager implements OnModuleDestroy {
       throw new BadRequestException("price must be a positive number");
     }
 
-    const engine = this.getOrCreateEngine(address, token);
-    if (!engine.isRunning()) {
-      engine.start();
-      this.notifyEngineStarted();
-    }
-    return engine.onSignal({ type: "BUY", price });
+    return this.handleSignal(address, {
+      type: "BUY",
+      token,
+      price,
+    });
   }
 
   async tick(): Promise<void> {

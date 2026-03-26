@@ -37,6 +37,15 @@ export class StateStore {
     this.trades.push(trade);
   }
 
+  updateTrade(tradeId: string, patch: Partial<Trade>): void {
+    const idx = this.trades.findIndex((t) => t.id === tradeId);
+    if (idx < 0) return;
+    this.trades[idx] = {
+      ...this.trades[idx],
+      ...patch,
+    };
+  }
+
   clearTrades(): void {
     this.trades = [];
   }
