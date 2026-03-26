@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 
 type ChainOption = {
@@ -38,6 +38,7 @@ export default function WalletHeader() {
   } = useWallet();
   const [chainOpen, setChainOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const chainMenuRef = useRef<HTMLDivElement | null>(null);
 
   const currentChain = CHAIN_OPTIONS.find((c) => c.id === chainId) ?? CHAIN_OPTIONS[0];
   const explorerUrl = `${currentChain.explorer}${address ?? ""}`;
@@ -56,7 +57,7 @@ export default function WalletHeader() {
         <button
           type="button"
           onClick={() => connect()}
-          className="rounded-lg bg-oo-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-oo-primary-hover"
+          className="h-10 rounded-lg bg-oo-primary px-4 py-0 text-sm font-medium text-white transition hover:bg-oo-primary-hover"
         >
           连接钱包并登录
         </button>
@@ -67,12 +68,24 @@ export default function WalletHeader() {
       <button
         type="button"
         onClick={() => setAccountOpen(true)}
-        className="rounded-lg border border-oo-border-strong px-4 py-2 text-sm text-oo-text-secondary transition hover:bg-oo-surface-hover"
+        className="h-10 rounded-lg border border-oo-border-strong px-4 py-0 text-sm text-oo-text-secondary transition hover:bg-oo-surface-hover"
       >
         {shortAddress(address ?? "")}
       </button>
     );
   }, [isConnected, connect, address]);
+
+  useEffect(() => {
+    if (!chainOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (chainMenuRef.current?.contains(target)) return;
+      setChainOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [chainOpen]);
 
   return (
     <>
@@ -85,15 +98,32 @@ export default function WalletHeader() {
             链上跟单回调入场交易面板
           </p>
         </div>
-        <div className="relative flex items-center gap-2">
+        <div ref={chainMenuRef} className="relative flex items-center gap-2">
           <button
             type="button"
             onClick={() => setChainOpen((v) => !v)}
-            className="rounded-lg border border-oo-border-strong px-4 py-2 text-sm text-oo-text-secondary transition hover:bg-oo-surface-hover"
+            className="inline-flex h-10 items-center rounded-lg border border-oo-border-strong px-4 py-0 text-sm text-oo-text-secondary transition hover:bg-oo-surface-hover"
           >
-            <span className="mr-2">{currentChain.icon}</span>
-            {currentChain.label}
-            <span className="ml-2">⌄</span>
+            <span className="mr-2 inline-flex items-center leading-none">{currentChain.icon}</span>
+            <span className="inline-flex items-center leading-none">{currentChain.label}</span>
+            <span className="ml-2 inline-flex items-center leading-none text-oo-text-muted">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <path
+                  d="M6 9l6 6 6-6"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </span>
           </button>
           {chainOpen && (
             <div className="absolute right-0 top-12 z-50 w-56 rounded-xl border border-oo-border bg-oo-surface p-2 shadow-lg">

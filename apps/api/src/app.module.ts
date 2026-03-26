@@ -6,6 +6,7 @@ import { BacktestModule } from "./backtest/backtest.module";
 import { TradingModule } from "./trading/trading.module";
 import { CopierModule } from "./copier/copier.module";
 import { ListenerModule } from "./listener/listener.module";
+import { WatcherModule } from "./watcher/watcher.module";
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { ListenerModule } from "./listener/listener.module";
     BacktestModule,
     TradingModule,
     CopierModule,
+    WatcherModule,
   ],
 })
 export class AppModule {}

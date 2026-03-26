@@ -129,6 +129,13 @@ export class EngineManager implements OnModuleDestroy {
     return { ok: true };
   }
 
+  removeAddress(address: string): { ok: true } {
+    const a = (address ?? "").trim();
+    if (!a) throw new BadRequestException("address is required");
+    this.watchedAddresses.delete(a.toLowerCase());
+    return { ok: true };
+  }
+
   isWatchedAddress(address: string): boolean {
     return this.watchedAddresses.has((address ?? "").trim().toLowerCase());
   }

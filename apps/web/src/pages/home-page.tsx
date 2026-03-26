@@ -1,31 +1,31 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WalletHeader from "@/components/WalletHeader";
 
-type EngineListItem = {
+type WatcherItem = {
   address: string;
-  token: string;
-  state: "IDLE" | "WAITING_ENTRY" | "IN_POSITION";
-  entryPrice?: number;
-  currentPrice?: number;
-  pnl?: number;
+  status: "RUNNING" | "STOPPED";
+  createdAt: number;
 };
 
-function fmtNum(n: number | undefined) {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—";
-  return n.toFixed(4);
+function maskAddress(address: string) {
+  if (!address) return "--";
+  if (address.length <= 10) return address;
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function fmtTime(ts: number) {
+  if (!Number.isFinite(ts)) return "--";
+  return new Date(ts).toLocaleString();
 }
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [inputAddress, setInputAddress] = useState("");
-  const [inputToken, setInputToken] = useState("");
-  const [inputPrice, setInputPrice] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [engineList, setEngineList] = useState<EngineListItem[]>([]);
+  const [watcherList, setWatcherList] = useState<WatcherItem[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => setMounted(true), []);
@@ -42,61 +42,76 @@ export default function Home() {
     return `请求失败 (${status})`;
   }, []);
 
-  const fetchEngineList = useCallback(async () => {
+  const fetchWatcherList = useCallback(async () => {
     try {
-      const res = await fetch(`${apiBaseUrl}/engine/list`);
+      const res = await fetch(`${apiBaseUrl}/watcher/list`);
       const data = (await res.json()) as unknown;
       if (!res.ok) {
         setError(parseApiError(data, res.status));
         return;
       }
       setError(null);
-      setEngineList(Array.isArray(data) ? (data as EngineListItem[]) : []);
+      setWatcherList(Array.isArray(data) ? (data as WatcherItem[]) : []);
     } catch {
-      setError("请求失败（engine/list）");
+      setError("请求失败（watcher/list）");
     }
   }, [apiBaseUrl, parseApiError]);
 
   useEffect(() => {
-    void fetchEngineList();
+    void fetchWatcherList();
     if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(() => void fetchEngineList(), 3000);
+    pollRef.current = setInterval(() => void fetchWatcherList(), 3000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [fetchEngineList]);
+  }, [fetchWatcherList]);
 
-  async function sendTestSignal() {
+  async function addWatcher() {
     const addr = inputAddress.trim();
-    const token = inputToken.trim();
-    const price = Number(inputPrice);
     setError(null);
     if (!addr) {
       setError("请输入 address");
       return;
     }
-    if (!token) {
-      setError("请输入 token");
-      return;
-    }
-    if (!Number.isFinite(price) || price <= 0) {
-      setError("请输入有效 price");
-      return;
-    }
     setBusy(true);
     try {
-      const res = await fetch(`${apiBaseUrl}/engine/signal`, {
+      const res = await fetch(`${apiBaseUrl}/watcher/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: addr, token, price }),
+        body: JSON.stringify({ address: addr }),
       });
       const data = (await res.json()) as unknown;
       if (!res.ok) throw new Error(parseApiError(data, res.status));
-      await fetchEngineList();
+      setInputAddress("");
+      await fetchWatcherList();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "发送信号失败");
+      setError(e instanceof Error ? e.message : "添加 watcher 失败");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function runAction(action: "start" | "stop" | "delete", address: string) {
+    setError(null);
+    try {
+      const res = await fetch(`${apiBaseUrl}/watcher/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address }),
+      });
+      const data = (await res.json()) as unknown;
+      if (!res.ok) throw new Error(parseApiError(data, res.status));
+      await fetchWatcherList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `watcher/${action} 失败`);
+    }
+  }
+
+  async function copyAddress(address: string) {
+    try {
+      await navigator.clipboard.writeText(address);
+    } catch {
+      setError("复制地址失败");
     }
   }
 
@@ -113,10 +128,8 @@ export default function Home() {
       <WalletHeader />
 
       <section className="rounded-xl border border-oo-border bg-oo-surface p-5 shadow-sm">
-        <h2 className="mb-3 text-sm font-semibold text-oo-text">
-          最小测试入口（/engine/signal）
-        </h2>
-        <div className="grid gap-2 md:grid-cols-3">
+        <h2 className="mb-3 text-sm font-semibold text-oo-text">Watcher 管理（/watcher/add）</h2>
+        <div className="grid gap-2 md:grid-cols-[1fr_auto]">
           <label className="flex flex-1 flex-col gap-1 text-xs text-oo-text-muted">
             Address
             <input
@@ -126,46 +139,26 @@ export default function Home() {
               className="w-full rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 font-mono text-sm text-oo-text outline-none placeholder:text-oo-text-muted focus:border-oo-primary focus:ring-1 focus:ring-oo-primary"
             />
           </label>
-          <label className="flex flex-1 flex-col gap-1 text-xs text-oo-text-muted">
-            Token
-            <input
-              value={inputToken}
-              onChange={(e) => setInputToken(e.target.value)}
-              placeholder="0x token..."
-              className="w-full rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 font-mono text-sm text-oo-text outline-none placeholder:text-oo-text-muted focus:border-oo-primary focus:ring-1 focus:ring-oo-primary"
-            />
-          </label>
-          <label className="flex flex-1 flex-col gap-1 text-xs text-oo-text-muted">
-            Price
-            <input
-              value={inputPrice}
-              onChange={(e) => setInputPrice(e.target.value)}
-              placeholder="例如 3200.5"
-              className="w-full rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 font-mono text-sm text-oo-text outline-none placeholder:text-oo-text-muted focus:border-oo-primary focus:ring-1 focus:ring-oo-primary"
-            />
-          </label>
-        </div>
-        <div className="mt-2">
-          <button
-            type="button"
-            onClick={() => void sendTestSignal()}
-            disabled={busy}
-            className="rounded-lg bg-oo-primary px-5 py-2.5 text-sm font-medium text-white transition hover:bg-oo-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            发送测试信号（BUY）
-          </button>
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={() => void addWatcher()}
+              disabled={busy}
+              className="rounded-lg bg-oo-primary px-5 py-2.5 text-sm font-medium text-white transition hover:bg-oo-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              添加
+            </button>
+          </div>
         </div>
         {error && <p className="mt-3 text-sm text-oo-error">{error}</p>}
       </section>
 
       <section className="rounded-xl border border-oo-border bg-oo-surface p-5 shadow-sm">
         <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-oo-text">
-            Engine 列表（/engine/list）
-          </h2>
+          <h2 className="text-sm font-semibold text-oo-text">Watcher 列表（/watcher/list）</h2>
           <button
             type="button"
-            onClick={() => void fetchEngineList()}
+            onClick={() => void fetchWatcherList()}
             className="rounded-lg border border-oo-border-strong px-3 py-1.5 text-xs text-oo-text-secondary transition hover:bg-oo-surface-hover"
           >
             刷新
@@ -176,49 +169,72 @@ export default function Home() {
             <thead className="bg-oo-bg text-xs text-oo-text-muted">
               <tr>
                 <th className="px-3 py-2 font-medium">address</th>
-                <th className="px-3 py-2 font-medium">token</th>
-                <th className="px-3 py-2 font-medium">state</th>
-                <th className="px-3 py-2 font-medium">current</th>
-                <th className="px-3 py-2 font-medium">entry</th>
-                <th className="px-3 py-2 font-medium">pnl</th>
+                <th className="px-3 py-2 font-medium">status</th>
+                <th className="px-3 py-2 font-medium">createdAt</th>
                 <th className="px-3 py-2 font-medium">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-oo-border text-oo-text-secondary">
-              {engineList.length === 0 ? (
+              {watcherList.length === 0 ? (
                 <tr>
-                  <td className="px-3 py-4 text-oo-text-muted" colSpan={7}>
-                    暂无 Engine；请先发送测试信号。
+                  <td className="px-3 py-4 text-oo-text-muted" colSpan={4}>
+                    暂无 Watcher；请先添加 address。
                   </td>
                 </tr>
               ) : (
-                engineList.map((e) => (
-                  <tr key={`${e.address}_${e.token}`}>
-                    <td className="px-3 py-2 font-mono text-xs text-oo-text break-all">
-                      {e.address}
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs text-oo-text break-all">
-                      {e.token}
-                    </td>
+                watcherList.map((w) => (
+                  <tr key={w.address}>
                     <td className="px-3 py-2 font-mono text-xs text-oo-text">
-                      {e.state}
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
-                      {fmtNum(e.currentPrice)}
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
-                      {fmtNum(e.entryPrice)}
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
-                      {fmtNum(e.pnl)}
+                      <button
+                        type="button"
+                        onClick={() => void copyAddress(w.address)}
+                        className="rounded px-1 py-0.5 transition hover:bg-oo-surface-hover"
+                        title={w.address}
+                      >
+                        {maskAddress(w.address)}
+                      </button>
                     </td>
                     <td className="px-3 py-2 text-xs">
-                      <Link
-                        className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
-                        href={`/engine/${encodeURIComponent(e.address)}/${encodeURIComponent(e.token)}`}
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          w.status === "RUNNING"
+                            ? "bg-green-500/15 text-green-400"
+                            : "bg-oo-surface-hover text-oo-text-muted"
+                        }`}
                       >
-                        View
-                      </Link>
+                        {w.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
+                      {fmtTime(w.createdAt)}
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        {w.status === "RUNNING" ? (
+                          <button
+                            type="button"
+                            onClick={() => void runAction("stop", w.address)}
+                            className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
+                          >
+                            Stop
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => void runAction("start", w.address)}
+                            className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
+                          >
+                            Start
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void runAction("delete", w.address)}
+                          className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
