@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
-import path from "path";
+import * as path from "path";
 
 export type MarketCandle = {
   time: number;
