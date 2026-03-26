@@ -33,12 +33,30 @@ type EngineStatus = {
     status: "OPEN";
   } | null;
   tickCount: number;
+  lastUpdateTime: number;
   address: string | null;
+};
+
+type CopierEventRecord = {
+  type:
+    | "SIGNAL"
+    | "ENTRY"
+    | "EXIT"
+    | "STOP"
+    | "ERROR_FETCH_PRICE";
+  timestamp: number;
+  price?: number;
+  message?: string;
 };
 
 function formatTime(tsSeconds: number) {
   if (!Number.isFinite(tsSeconds)) return "-";
   return new Date(tsSeconds * 1000).toISOString().replace("T", " ").slice(0, 19);
+}
+
+function formatTimeMs(ms: number) {
+  if (!Number.isFinite(ms) || ms <= 0) return "—";
+  return new Date(ms).toISOString().replace("T", " ").slice(0, 19);
 }
 
 export default function Home() {
@@ -55,8 +73,10 @@ export default function Home() {
     useState<TradingBacktestResponse | null>(null);
   const [engineBusy, setEngineBusy] = useState(false);
   const [signalPriceInput, setSignalPriceInput] = useState("");
+  const [copierEvents, setCopierEvents] = useState<CopierEventRecord[]>([]);
   const pollStatusRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollResultRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollEventsRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -108,10 +128,24 @@ export default function Home() {
     }
   }, [apiBaseUrl, parseApiError]);
 
+  const fetchCopierEvents = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBaseUrl}/copier/events`);
+      const data = (await res.json()) as { events?: CopierEventRecord[] };
+      if (!res.ok) return;
+      if (Array.isArray(data.events)) {
+        setCopierEvents(data.events);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [apiBaseUrl]);
+
   useEffect(() => {
     return () => {
       if (pollStatusRef.current) clearInterval(pollStatusRef.current);
       if (pollResultRef.current) clearInterval(pollResultRef.current);
+      if (pollEventsRef.current) clearInterval(pollEventsRef.current);
     };
   }, []);
 
@@ -128,6 +162,20 @@ export default function Home() {
       if (pollStatusRef.current) clearInterval(pollStatusRef.current);
     };
   }, [engineStatus?.running, fetchStatus]);
+
+  useEffect(() => {
+    if (pollEventsRef.current) {
+      clearInterval(pollEventsRef.current);
+      pollEventsRef.current = null;
+    }
+    if (engineStatus?.running) {
+      void fetchCopierEvents();
+      pollEventsRef.current = setInterval(() => void fetchCopierEvents(), 3000);
+    }
+    return () => {
+      if (pollEventsRef.current) clearInterval(pollEventsRef.current);
+    };
+  }, [engineStatus?.running, fetchCopierEvents]);
 
   useEffect(() => {
     if (pollResultRef.current) {
@@ -195,6 +243,7 @@ export default function Home() {
       const data = (await res.json()) as unknown;
       if (!res.ok) throw new Error(parseApiError(data, res.status));
       await fetchStatus();
+      await fetchCopierEvents();
     } catch (e) {
       setEngineError(e instanceof Error ? e.message : "启动失败");
     } finally {
@@ -220,6 +269,7 @@ export default function Home() {
       const data = (await res.json()) as unknown;
       if (!res.ok) throw new Error(parseApiError(data, res.status));
       await fetchStatus();
+      await fetchCopierEvents();
     } catch (e) {
       setEngineError(e instanceof Error ? e.message : "触发信号失败");
     } finally {
@@ -238,6 +288,7 @@ export default function Home() {
       if (!res.ok) throw new Error(parseApiError(data, res.status));
       await fetchStatus();
       await fetchEngineResult();
+      await fetchCopierEvents();
     } catch (e) {
       setEngineError(e instanceof Error ? e.message : "停止失败");
     } finally {
@@ -379,6 +430,12 @@ export default function Home() {
               <dd className="font-mono text-oo-text">{engineStatus.tickCount}</dd>
             </div>
             <div>
+              <dt className="text-xs text-oo-text-muted">lastUpdateTime</dt>
+              <dd className="font-mono text-xs text-oo-text">
+                {formatTimeMs(engineStatus.lastUpdateTime)}
+              </dd>
+            </div>
+            <div>
               <dt className="text-xs text-oo-text-muted">currentPrice</dt>
               <dd className="font-mono text-oo-text">
                 {engineStatus.currentPrice != null
@@ -404,6 +461,71 @@ export default function Home() {
             </div>
           </dl>
         )}
+      </section>
+
+      <section className="rounded-xl border border-oo-border bg-oo-surface p-5 shadow-sm">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-oo-text">
+            行为日志（/copier/events，最近 20 条）
+          </h2>
+          <button
+            type="button"
+            onClick={() => void fetchCopierEvents()}
+            className="rounded-lg border border-oo-border-strong px-3 py-1.5 text-xs text-oo-text-secondary transition hover:bg-oo-surface-hover"
+          >
+            刷新日志
+          </button>
+        </div>
+        <div className="overflow-x-auto rounded-lg border border-oo-border">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-oo-bg text-xs text-oo-text-muted">
+              <tr>
+                <th className="px-3 py-2 font-medium">时间</th>
+                <th className="px-3 py-2 font-medium">类型</th>
+                <th className="px-3 py-2 font-medium">价格</th>
+                <th className="px-3 py-2 font-medium">说明</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-oo-border text-oo-text-secondary">
+              {copierEvents.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-4 text-oo-text-muted" colSpan={4}>
+                    暂无事件；启动引擎后会轮询拉取，或点击「刷新日志」。
+                  </td>
+                </tr>
+              ) : (
+                [...copierEvents].reverse().map((ev, idx) => (
+                  <tr key={`${ev.timestamp}-${idx}`}>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-oo-text">
+                      {formatTimeMs(ev.timestamp)}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs">
+                      <span
+                        className={
+                          ev.type === "ERROR_FETCH_PRICE"
+                            ? "text-oo-error"
+                            : ev.type === "EXIT"
+                              ? "text-oo-success"
+                              : "text-oo-text"
+                        }
+                      >
+                        {ev.type}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
+                      {ev.price != null && Number.isFinite(ev.price)
+                        ? ev.price.toFixed(4)
+                        : "—"}
+                    </td>
+                    <td className="max-w-md truncate px-3 py-2 text-xs text-oo-text-muted">
+                      {ev.message ?? "—"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="rounded-xl border border-oo-border bg-oo-surface p-5 shadow-sm">

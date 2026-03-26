@@ -5,6 +5,7 @@ import {
 } from "@nestjs/common";
 import type { MarketCandle } from "../market/market.service";
 import { MarketService } from "../market/market.service";
+import { EventService } from "../event/event.service";
 import type { TradeRecord } from "../trading/trading.service";
 
 export type EngineState = "IDLE" | "IN_POSITION";
@@ -26,6 +27,8 @@ export type EngineStatusDto = {
   position: EnginePosition | null;
   /** Number of live price ticks processed (for observability). */
   tickCount: number;
+  /** Unix ms — last time the engine loop finished a tick (or handled a price error). */
+  lastUpdateTime: number;
   address: string | null;
 };
 
@@ -70,7 +73,13 @@ export class EngineService {
 
   private trades: TradeRecord[] = [];
 
-  constructor(private readonly marketService: MarketService) {}
+  /** Last loop activity time (ms). */
+  private lastUpdateTime = 0;
+
+  constructor(
+    private readonly marketService: MarketService,
+    private readonly eventService: EventService,
+  ) {}
 
   start(address: string): { ok: true } {
     const trimmed = (address ?? "").trim();
@@ -97,6 +106,7 @@ export class EngineService {
     this.currentPrice = null;
     this.currentPosition = null;
     this.trades = [];
+    this.lastUpdateTime = Date.now();
 
     this.running = true;
     this.loopPromise = this.runLoop();
@@ -125,6 +135,17 @@ export class EngineService {
     const stopLoss = entryPrice * (1 - MANUAL_SL_FRACTION);
     const takeProfit = entryPrice * (1 + MANUAL_TP_FRACTION);
 
+    this.eventService.addEvent({
+      type: "SIGNAL",
+      price,
+      message: "Manual triggerSignal",
+    });
+    this.eventService.addEvent({
+      type: "ENTRY",
+      price: entryPrice,
+      message: `SL=${stopLoss.toFixed(4)} TP=${takeProfit.toFixed(4)}`,
+    });
+
     this.currentPosition = {
       entryTime: nowUnixSec(),
       entryPrice,
@@ -139,10 +160,15 @@ export class EngineService {
 
   async stop(): Promise<{ ok: true }> {
     this.running = false;
+    this.eventService.addEvent({
+      type: "STOP",
+      message: "Engine stop requested",
+    });
     if (this.loopPromise) {
       await this.loopPromise.catch(() => undefined);
       this.loopPromise = null;
     }
+    this.lastUpdateTime = Date.now();
     return { ok: true };
   }
 
@@ -159,6 +185,7 @@ export class EngineService {
       entryPrice,
       position: this.currentPosition,
       tickCount: this.tickCount,
+      lastUpdateTime: this.lastUpdateTime,
       address: this.address,
     };
   }
@@ -186,9 +213,13 @@ export class EngineService {
         try {
           livePrice = await this.marketService.getLatestPrice();
         } catch (err) {
-          this.logger.warn(
-            `getLatestPrice failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(`getLatestPrice failed: ${msg}`);
+          this.eventService.addEvent({
+            type: "ERROR_FETCH_PRICE",
+            message: msg,
+          });
+          this.lastUpdateTime = Date.now();
           await sleep(TICK_MS);
           continue;
         }
@@ -209,11 +240,11 @@ export class EngineService {
             const pos = this.currentPosition;
 
             if (livePrice <= pos.stopLoss) {
-              this.pushTradeAndReset(pos, tSec, pos.stopLoss);
+              this.pushTradeAndReset(pos, tSec, pos.stopLoss, "stop_loss");
               break;
             }
             if (livePrice >= pos.takeProfit) {
-              this.pushTradeAndReset(pos, tSec, pos.takeProfit);
+              this.pushTradeAndReset(pos, tSec, pos.takeProfit, "take_profit");
               break;
             }
             break;
@@ -222,10 +253,16 @@ export class EngineService {
             break;
         }
 
+        this.lastUpdateTime = Date.now();
         await sleep(TICK_MS);
       }
     } catch (err) {
       this.logger.error("Engine loop error", err);
+      this.eventService.addEvent({
+        type: "ERROR_FETCH_PRICE",
+        message: `Engine loop crashed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      this.lastUpdateTime = Date.now();
       this.running = false;
     }
   }
@@ -234,7 +271,13 @@ export class EngineService {
     pos: EnginePosition,
     exitTime: number,
     exitPrice: number,
+    reason: "stop_loss" | "take_profit",
   ) {
+    this.eventService.addEvent({
+      type: "EXIT",
+      price: exitPrice,
+      message: reason,
+    });
     this.trades.push({
       entryTime: pos.entryTime,
       entryPrice: pos.entryPrice,
