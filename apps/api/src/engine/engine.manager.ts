@@ -8,11 +8,13 @@ import { MarketService } from "../market/market.service";
 import { TradingEngine } from "./trading-engine";
 import type { CopierSignalPayload, OnSignalResult } from "./types";
 import { ENGINE_TICK_MS } from "./types";
+import type { EngineStatusDto } from "./types";
 
 @Injectable()
 export class EngineManager implements OnModuleDestroy {
   private readonly logger = new Logger(EngineManager.name);
   private readonly engines = new Map<string, TradingEngine>();
+  private readonly watchedAddresses = new Set<string>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private tickInFlight = false;
 
@@ -54,6 +56,62 @@ export class EngineManager implements OnModuleDestroy {
       throw new BadRequestException(`No engine for ${key}`);
     }
     return engine;
+  }
+
+  listEngines(): TradingEngine[] {
+    return [...this.engines.values()];
+  }
+
+  listEngineSummaries(): Array<{
+    address: string;
+    token: string;
+    state: EngineStatusDto["state"];
+    entryPrice?: number;
+    currentPrice?: number;
+    pnl?: number;
+  }> {
+    return this.listEngines().map((e) => {
+      const status = e.getStatus();
+      const result = e.getResult();
+      return {
+        address: status.address,
+        token: status.token,
+        state: status.state,
+        entryPrice: status.entryPrice ?? undefined,
+        currentPrice: status.currentPrice ?? undefined,
+        pnl: result.stats.totalPnL,
+      };
+    });
+  }
+
+  getEngineDetail(address: string, token: string): {
+    state: EngineStatusDto["state"];
+    position: EngineStatusDto["position"];
+    trades: ReturnType<TradingEngine["getResult"]>["trades"];
+    events: ReturnType<TradingEngine["getRecentEvents"]>;
+    currentPrice: number | null;
+  } {
+    const engine = this.getEngineOrThrow(address, token);
+    const status = engine.getStatus();
+    const result = engine.getResult();
+    const events = engine.getRecentEvents(100);
+    return {
+      state: status.state,
+      position: status.position,
+      trades: result.trades,
+      events,
+      currentPrice: status.currentPrice,
+    };
+  }
+
+  addAddress(address: string): { ok: true } {
+    const a = (address ?? "").trim();
+    if (!a) throw new BadRequestException("address is required");
+    this.watchedAddresses.add(a);
+    // MVP: we don't yet have on-chain token detection. Create a placeholder engine
+    // keyed by (address, token=address) so it shows up in /engine/list.
+    this.getOrCreateEngine(a, a);
+    return { ok: true };
   }
 
   /**
