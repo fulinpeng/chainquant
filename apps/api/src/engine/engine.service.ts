@@ -39,6 +39,12 @@ export type EngineStatusDto = {
   position: EnginePosition | null;
   tickCount: number;
   lastUpdateTime: number;
+  /** Engine loop tick index at last EXIT; null if never exited this session. */
+  lastExitTick: number | null;
+  /** Configured cooldown length in ticks. */
+  cooldownCandles: number;
+  /** Ticks remaining before a new signal is allowed; 0 when not cooling down. */
+  cooldownTicksRemaining: number;
   address: string | null;
 };
 
@@ -56,6 +62,9 @@ export type EngineResultDto = {
 const TICK_MS = 2000;
 const MANUAL_SL_FRACTION = 1 / 10000;
 const MANUAL_TP_FRACTION = 2 / 10000;
+
+/** Min ticks after EXIT before accepting a new signal (proxy for "candles"). */
+export const COOLDOWN_CANDLES = 10;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -86,6 +95,8 @@ export class EngineService {
   private trades: TradeRecord[] = [];
 
   private lastUpdateTime = 0;
+  /** Set to `tickCount` on each EXIT (FSM cooldown). */
+  private lastExitTick: number | null = null;
 
   constructor(
     private readonly marketService: MarketService,
@@ -120,6 +131,7 @@ export class EngineService {
     this.currentPosition = null;
     this.trades = [];
     this.lastUpdateTime = Date.now();
+    this.lastExitTick = null;
 
     this.running = true;
     this.loopPromise = this.runLoop();
@@ -128,8 +140,7 @@ export class EngineService {
   }
 
   /**
-   * External signal injection. MANUAL: queues entry at next live price tick.
-   * Ignored when already in position or not IDLE.
+   * External signal injection. Only accepted in IDLE and outside post-exit cooldown.
    */
   onSignal(signal: Signal): OnSignalResult {
     if (!this.running) {
@@ -139,10 +150,23 @@ export class EngineService {
       throw new BadRequestException('signal.type must be "BUY" or "SELL"');
     }
 
-    if (this.currentPosition !== null) {
+    if (this.state !== "IDLE") {
+      this.eventService.addEvent({
+        type: "INVALID_SIGNAL",
+        message: "Signal ignored due to state",
+      });
       return { ok: true, ignored: true };
     }
-    if (this.state !== "IDLE") {
+
+    if (
+      this.lastExitTick !== null &&
+      this.tickCount - this.lastExitTick < COOLDOWN_CANDLES
+    ) {
+      const need = COOLDOWN_CANDLES - (this.tickCount - this.lastExitTick);
+      this.eventService.addEvent({
+        type: "COOLDOWN_BLOCK",
+        message: `Cooldown active; need ~${need} more tick(s) (cooldown=${COOLDOWN_CANDLES})`,
+      });
       return { ok: true, ignored: true };
     }
 
@@ -185,6 +209,11 @@ export class EngineService {
         ? this.pendingSignal.type
         : null;
 
+    const cooldownTicksRemaining =
+      this.lastExitTick === null
+        ? 0
+        : Math.max(0, COOLDOWN_CANDLES - (this.tickCount - this.lastExitTick));
+
     return {
       running: this.running,
       mode: this.mode,
@@ -195,6 +224,9 @@ export class EngineService {
       position: this.currentPosition,
       tickCount: this.tickCount,
       lastUpdateTime: this.lastUpdateTime,
+      lastExitTick: this.lastExitTick,
+      cooldownCandles: COOLDOWN_CANDLES,
+      cooldownTicksRemaining,
       address: this.address,
     };
   }
@@ -359,5 +391,6 @@ export class EngineService {
     });
     this.currentPosition = null;
     this.state = "IDLE";
+    this.lastExitTick = this.tickCount;
   }
 }

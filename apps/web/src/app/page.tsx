@@ -37,6 +37,9 @@ type EngineStatus = {
   } | null;
   tickCount: number;
   lastUpdateTime: number;
+  lastExitTick: number | null;
+  cooldownCandles: number;
+  cooldownTicksRemaining: number;
   address: string | null;
 };
 
@@ -46,7 +49,9 @@ type CopierEventRecord = {
     | "ENTRY"
     | "EXIT"
     | "STOP"
-    | "ERROR_FETCH_PRICE";
+    | "ERROR_FETCH_PRICE"
+    | "INVALID_SIGNAL"
+    | "COOLDOWN_BLOCK";
   timestamp: number;
   price?: number;
   message?: string;
@@ -270,7 +275,7 @@ export default function Home() {
         "ignored" in data &&
         (data as { ignored?: boolean }).ignored
       ) {
-        setEngineError("信号已忽略（已有持仓或当前非 IDLE）");
+        setEngineError("信号未接受（非 IDLE、平仓冷却中或其它保护）；见行为日志");
       }
       await fetchStatus();
       await fetchCopierEvents();
@@ -350,7 +355,8 @@ export default function Home() {
           <code className="text-oo-text">BUY</code> /{" "}
           <code className="text-oo-text">SELL</code>。信号后进入{" "}
           <code className="text-oo-text">WAITING_ENTRY</code>，下一 tick 用 Dexscreener
-          现价开仓；多/空对应 ±1/10000 止损、±2/10000 止盈。有持仓时重复信号会被忽略。
+          现价开仓；多/空对应 ±1/10000 止损、±2/10000 止盈。非{" "}
+          <code className="text-oo-text">IDLE</code> 或平仓后冷却 tick 未满时信号会被拒绝并记日志。
         </p>
         <div className="mb-4 flex flex-wrap gap-2">
           <button
@@ -359,7 +365,8 @@ export default function Home() {
             disabled={
               engineBusy ||
               !engineStatus?.running ||
-              engineStatus.state !== "IDLE"
+              engineStatus.state !== "IDLE" ||
+              (engineStatus.cooldownTicksRemaining ?? 0) > 0
             }
             className="rounded-lg bg-oo-success px-5 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -371,7 +378,8 @@ export default function Home() {
             disabled={
               engineBusy ||
               !engineStatus?.running ||
-              engineStatus.state !== "IDLE"
+              engineStatus.state !== "IDLE" ||
+              (engineStatus.cooldownTicksRemaining ?? 0) > 0
             }
             className="rounded-lg bg-oo-error px-5 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -442,6 +450,19 @@ export default function Home() {
             <div>
               <dt className="text-xs text-oo-text-muted">tickCount</dt>
               <dd className="font-mono text-oo-text">{engineStatus.tickCount}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-oo-text-muted">lastExitTick</dt>
+              <dd className="font-mono text-oo-text">
+                {engineStatus.lastExitTick ?? "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-oo-text-muted">cooldown</dt>
+              <dd className="font-mono text-oo-text">
+                {engineStatus.cooldownCandles ?? "—"} ticks · 剩余{" "}
+                {engineStatus.cooldownTicksRemaining ?? 0}
+              </dd>
             </div>
             <div>
               <dt className="text-xs text-oo-text-muted">lastUpdateTime</dt>
@@ -520,7 +541,10 @@ export default function Home() {
                             ? "text-oo-error"
                             : ev.type === "EXIT"
                               ? "text-oo-success"
-                              : "text-oo-text"
+                              : ev.type === "INVALID_SIGNAL" ||
+                                  ev.type === "COOLDOWN_BLOCK"
+                                ? "text-amber-400"
+                                : "text-oo-text"
                         }
                       >
                         {ev.type}

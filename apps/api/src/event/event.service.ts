@@ -5,7 +5,9 @@ export type EventType =
   | "ENTRY"
   | "EXIT"
   | "STOP"
-  | "ERROR_FETCH_PRICE";
+  | "ERROR_FETCH_PRICE"
+  | "INVALID_SIGNAL"
+  | "COOLDOWN_BLOCK";
 
 export type EngineEventRecord = {
   type: EventType;
