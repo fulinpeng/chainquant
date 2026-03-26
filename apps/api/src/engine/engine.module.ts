@@ -1,10 +1,9 @@
 import { Module } from "@nestjs/common";
 import { EngineService } from "./engine.service";
 import { MarketModule } from "../market/market.module";
-import { TradingModule } from "../trading/trading.module";
 
 @Module({
-  imports: [MarketModule, TradingModule],
+  imports: [MarketModule],
   providers: [EngineService],
   exports: [EngineService],
 })

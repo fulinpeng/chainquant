@@ -6,15 +6,8 @@ import {
 import type { MarketCandle } from "../market/market.service";
 import { MarketService } from "../market/market.service";
 import type { TradeRecord } from "../trading/trading.service";
-import { TradingService } from "../trading/trading.service";
 
-export type EngineState = "IDLE" | "WAITING_ENTRY" | "IN_POSITION";
-
-export type EngineSignal = {
-  price: number;
-  timestamp: number;
-  expireIndex: number;
-};
+export type EngineState = "IDLE" | "IN_POSITION";
 
 export type EnginePosition = {
   entryTime: number;
@@ -28,9 +21,11 @@ export type EngineStatusDto = {
   running: boolean;
   state: EngineState;
   currentPrice: number | null;
+  /** IN_POSITION: position entry price (manual trigger uses submitted price). */
   entryPrice: number | null;
   position: EnginePosition | null;
-  currentIndex: number;
+  /** Number of live price ticks processed (for observability). */
+  tickCount: number;
   address: string | null;
 };
 
@@ -43,13 +38,18 @@ export type EngineResultDto = {
   };
 };
 
-const TICK_MS = 500;
-const ATR_PERIOD = 14;
-const SIGNAL_EVERY = 50;
-const ENTRY_TIMEOUT_BARS = 20;
+const TICK_MS = 2000;
+/** Manual long: stop-loss = entry × (1 − 1/10000). */
+const MANUAL_SL_FRACTION = 1 / 10000;
+/** Manual long: take-profit = entry × (1 + 2/10000). */
+const MANUAL_TP_FRACTION = 2 / 10000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function nowUnixSec(): number {
+  return Math.floor(Date.now() / 1000);
 }
 
 @Injectable()
@@ -63,18 +63,14 @@ export class EngineService {
   private candles: MarketCandle[] = [];
 
   private state: EngineState = "IDLE";
-  private currentIndex = -1;
+  private tickCount = 0;
   private currentPrice: number | null = null;
 
-  private currentSignal: EngineSignal | null = null;
   private currentPosition: EnginePosition | null = null;
 
   private trades: TradeRecord[] = [];
 
-  constructor(
-    private readonly marketService: MarketService,
-    private readonly tradingService: TradingService,
-  ) {}
+  constructor(private readonly marketService: MarketService) {}
 
   start(address: string): { ok: true } {
     const trimmed = (address ?? "").trim();
@@ -97,14 +93,46 @@ export class EngineService {
     this.address = trimmed;
     this.candles = candles;
     this.state = "IDLE";
-    this.currentIndex = -1;
+    this.tickCount = 0;
     this.currentPrice = null;
-    this.currentSignal = null;
     this.currentPosition = null;
     this.trades = [];
 
     this.running = true;
     this.loopPromise = this.runLoop();
+
+    return { ok: true };
+  }
+
+  /**
+   * Manual entry (IDLE only): open long at submitted price.
+   * SL = entry × (1 − 1/10000), TP = entry × (1 + 2/10000).
+   */
+  triggerSignal(price: number): { ok: true } {
+    if (!this.running) {
+      throw new BadRequestException("Engine is not running");
+    }
+    if (this.state !== "IDLE") {
+      throw new BadRequestException(
+        "triggerSignal only allowed when state is IDLE",
+      );
+    }
+    if (!Number.isFinite(price) || price <= 0) {
+      throw new BadRequestException("price must be a positive number");
+    }
+
+    const entryPrice = price;
+    const stopLoss = entryPrice * (1 - MANUAL_SL_FRACTION);
+    const takeProfit = entryPrice * (1 + MANUAL_TP_FRACTION);
+
+    this.currentPosition = {
+      entryTime: nowUnixSec(),
+      entryPrice,
+      stopLoss,
+      takeProfit,
+      status: "OPEN",
+    };
+    this.state = "IN_POSITION";
 
     return { ok: true };
   }
@@ -120,11 +148,9 @@ export class EngineService {
 
   getStatus(): EngineStatusDto {
     const entryPrice =
-      this.state === "WAITING_ENTRY" && this.currentSignal
-        ? this.currentSignal.price * 0.97
-        : this.state === "IN_POSITION" && this.currentPosition
-          ? this.currentPosition.entryPrice
-          : null;
+      this.state === "IN_POSITION" && this.currentPosition
+        ? this.currentPosition.entryPrice
+        : null;
 
     return {
       running: this.running,
@@ -132,7 +158,7 @@ export class EngineService {
       currentPrice: this.currentPrice,
       entryPrice,
       position: this.currentPosition,
-      currentIndex: this.currentIndex,
+      tickCount: this.tickCount,
       address: this.address,
     };
   }
@@ -156,71 +182,23 @@ export class EngineService {
   private async runLoop(): Promise<void> {
     try {
       while (this.running) {
-        this.currentIndex++;
-        if (this.currentIndex >= this.candles.length) {
-          this.logger.log("Reached end of candles; stopping engine.");
-          this.running = false;
-          break;
+        let livePrice: number;
+        try {
+          livePrice = await this.marketService.getLatestPrice();
+        } catch (err) {
+          this.logger.warn(
+            `getLatestPrice failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          await sleep(TICK_MS);
+          continue;
         }
 
-        const candle = this.candles[this.currentIndex];
-        const currentPrice = candle.close;
-        this.currentPrice = currentPrice;
+        this.tickCount++;
+        this.currentPrice = livePrice;
+        const tSec = nowUnixSec();
 
         switch (this.state) {
           case "IDLE": {
-            if (
-              this.currentIndex > 0 &&
-              this.currentIndex % SIGNAL_EVERY === 0
-            ) {
-              const signalPrice = currentPrice;
-              this.currentSignal = {
-                price: signalPrice,
-                timestamp: candle.time,
-                expireIndex: this.currentIndex + ENTRY_TIMEOUT_BARS,
-              };
-              this.state = "WAITING_ENTRY";
-            }
-            break;
-          }
-          case "WAITING_ENTRY": {
-            if (!this.currentSignal) {
-              this.state = "IDLE";
-              break;
-            }
-            const entryTarget = this.currentSignal.price * 0.97;
-
-            if (this.currentIndex > this.currentSignal.expireIndex) {
-              this.currentSignal = null;
-              this.state = "IDLE";
-              break;
-            }
-
-            if (currentPrice <= entryTarget) {
-              const atr = this.tradingService.computeAtr(
-                this.candles,
-                this.currentIndex,
-                ATR_PERIOD,
-              );
-              if (atr !== null && Number.isFinite(atr) && atr > 0) {
-                const entryPrice = entryTarget;
-                const stopLoss = entryPrice - atr * 2;
-                const takeProfit =
-                  entryPrice + (entryPrice - stopLoss) * 2;
-                this.currentPosition = {
-                  entryTime: candle.time,
-                  entryPrice,
-                  stopLoss,
-                  takeProfit,
-                  status: "OPEN",
-                };
-                this.currentSignal = null;
-                this.state = "IN_POSITION";
-              } else {
-                this.currentSignal = null;
-                this.state = "IDLE";
-              }
-            }
             break;
           }
           case "IN_POSITION": {
@@ -230,12 +208,12 @@ export class EngineService {
             }
             const pos = this.currentPosition;
 
-            if (currentPrice <= pos.stopLoss) {
-              this.pushTradeAndReset(pos, candle.time, pos.stopLoss);
+            if (livePrice <= pos.stopLoss) {
+              this.pushTradeAndReset(pos, tSec, pos.stopLoss);
               break;
             }
-            if (currentPrice >= pos.takeProfit) {
-              this.pushTradeAndReset(pos, candle.time, pos.takeProfit);
+            if (livePrice >= pos.takeProfit) {
+              this.pushTradeAndReset(pos, tSec, pos.takeProfit);
               break;
             }
             break;

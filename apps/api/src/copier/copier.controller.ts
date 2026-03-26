@@ -13,6 +13,10 @@ type CopierRunBody = {
   address: string;
 };
 
+type CopierSignalBody = {
+  price: number;
+};
+
 @Controller("copier")
 export class CopierController {
   constructor(
@@ -46,5 +50,11 @@ export class CopierController {
   @Get("result")
   result() {
     return this.engineService.getResult();
+  }
+
+  @Post("signal")
+  @HttpCode(HttpStatus.OK)
+  signal(@Body() body: CopierSignalBody) {
+    return this.engineService.triggerSignal(body.price);
   }
 }

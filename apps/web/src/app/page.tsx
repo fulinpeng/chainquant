@@ -22,7 +22,7 @@ type TradingBacktestResponse = {
 
 type EngineStatus = {
   running: boolean;
-  state: "IDLE" | "WAITING_ENTRY" | "IN_POSITION";
+  state: "IDLE" | "IN_POSITION";
   currentPrice: number | null;
   entryPrice: number | null;
   position: {
@@ -32,7 +32,7 @@ type EngineStatus = {
     takeProfit: number;
     status: "OPEN";
   } | null;
-  currentIndex: number;
+  tickCount: number;
   address: string | null;
 };
 
@@ -54,6 +54,7 @@ export default function Home() {
   const [engineResult, setEngineResult] =
     useState<TradingBacktestResponse | null>(null);
   const [engineBusy, setEngineBusy] = useState(false);
+  const [signalPriceInput, setSignalPriceInput] = useState("");
   const pollStatusRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollResultRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -201,6 +202,31 @@ export default function Home() {
     }
   }
 
+  async function sendManualSignal() {
+    const raw = signalPriceInput.trim();
+    const price = Number(raw);
+    setEngineError(null);
+    if (!Number.isFinite(price) || price <= 0) {
+      setEngineError("请输入有效的 signal price（正数）");
+      return;
+    }
+    setEngineBusy(true);
+    try {
+      const res = await fetch(`${apiBaseUrl}/copier/signal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ price }),
+      });
+      const data = (await res.json()) as unknown;
+      if (!res.ok) throw new Error(parseApiError(data, res.status));
+      await fetchStatus();
+    } catch (e) {
+      setEngineError(e instanceof Error ? e.message : "触发信号失败");
+    } finally {
+      setEngineBusy(false);
+    }
+  }
+
   async function stopEngine() {
     setEngineBusy(true);
     setEngineError(null);
@@ -265,9 +291,38 @@ export default function Home() {
           持续运行引擎
         </h2>
         <p className="mb-4 text-xs text-oo-text-muted">
-          Start 后每 2s 推进一根 K 线；运行中会每 2s 拉取 status、约每 8s
-          拉取 result。也可手动刷新。
+          Start 后每 2s 拉取 Dexscreener 实时价用于判断是否触发止盈/止损。手动开仓：止损为开仓价
+          −1/10000，止盈为开仓价 +2/10000。仅在 IDLE 时可「按此价开仓」。
         </p>
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end">
+          <div className="flex flex-1 flex-col gap-1">
+            <label className="text-xs text-oo-text-muted">
+              开仓价 (USD)
+            </label>
+            <input
+              value={signalPriceInput}
+              onChange={(e) => setSignalPriceInput(e.target.value)}
+              placeholder={
+                engineStatus?.currentPrice != null
+                  ? String(engineStatus.currentPrice.toFixed(2))
+                  : "例如当前价"
+              }
+              className="w-full max-w-xs rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 font-mono text-sm text-oo-text outline-none placeholder:text-oo-text-muted focus:border-oo-primary focus:ring-1 focus:ring-oo-primary"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={sendManualSignal}
+            disabled={
+              engineBusy ||
+              !engineStatus?.running ||
+              engineStatus.state !== "IDLE"
+            }
+            className="rounded-lg border border-oo-border-strong px-4 py-2 text-sm text-oo-text-secondary transition hover:bg-oo-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            按此价开仓
+          </button>
+        </div>
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -320,8 +375,8 @@ export default function Home() {
               <dd className="font-mono text-oo-text">{engineStatus.state}</dd>
             </div>
             <div>
-              <dt className="text-xs text-oo-text-muted">currentIndex</dt>
-              <dd className="font-mono text-oo-text">{engineStatus.currentIndex}</dd>
+              <dt className="text-xs text-oo-text-muted">tickCount</dt>
+              <dd className="font-mono text-oo-text">{engineStatus.tickCount}</dd>
             </div>
             <div>
               <dt className="text-xs text-oo-text-muted">currentPrice</dt>
@@ -332,7 +387,7 @@ export default function Home() {
               </dd>
             </div>
             <div>
-              <dt className="text-xs text-oo-text-muted">entryPrice（目标/持仓）</dt>
+              <dt className="text-xs text-oo-text-muted">entryPrice（持仓开仓价）</dt>
               <dd className="font-mono text-oo-text">
                 {engineStatus.entryPrice != null
                   ? engineStatus.entryPrice.toFixed(4)
@@ -340,7 +395,7 @@ export default function Home() {
               </dd>
             </div>
             <div className="md:col-span-2">
-              <dt className="text-xs text-oo-text-muted">position</dt>
+              <dt className="text-xs text-oo-text-muted">position（持仓中）</dt>
               <dd className="font-mono text-xs break-all text-oo-text">
                 {engineStatus.position
                   ? JSON.stringify(engineStatus.position, null, 0)

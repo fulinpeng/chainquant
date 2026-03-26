@@ -25,6 +25,26 @@ type MarketDataset = {
 
 const DATA_FILE_PATH = path.resolve(__dirname, "../../data/ethUSDT-4h.js");
 
+/** WETH on Ethereum mainnet — hardcoded for MVP live price via Dexscreener. */
+const DEXSCREENER_ETH_TOKEN =
+  "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+
+type DexscreenerPair = {
+  chainId?: string;
+  priceUsd?: string;
+  liquidity?: { usd?: number };
+  volume?: { h24?: number };
+};
+
+type DexscreenerTokenResponse = {
+  pairs?: DexscreenerPair[];
+};
+
+/** Ignore fork-chain pools that reuse WETH address with fake ~0 USD prices. */
+const PREFERRED_CHAIN = "ethereum";
+/** ETH spot should be well above this (USD). */
+const MIN_SANE_PRICE_USD = 100;
+
 let cachedDataset: MarketDataset | null = null;
 
 function loadDataset(): MarketDataset {
@@ -68,6 +88,58 @@ function parseOpenTimeToUnixSeconds(openTime: string): number {
 
 @Injectable()
 export class MarketService {
+  /**
+   * Latest token price in USD from Dexscreener (MVP: fixed ETH / WETH).
+   */
+  async getLatestPrice(): Promise<number> {
+    const url = `https://api.dexscreener.com/latest/dex/tokens/${DEXSCREENER_ETH_TOKEN}`;
+    let res: Response;
+    try {
+      res = await fetch(url, { method: "GET" });
+    } catch {
+      throw new BadRequestException("Dexscreener request failed (network)");
+    }
+
+    if (!res.ok) {
+      throw new BadRequestException(
+        `Dexscreener request failed (${res.status})`,
+      );
+    }
+
+    const data = (await res.json()) as DexscreenerTokenResponse;
+    const pairs = data.pairs;
+    if (!Array.isArray(pairs) || pairs.length === 0) {
+      throw new BadRequestException("Dexscreener returned no pairs for token");
+    }
+
+    const mainnet = pairs.filter(
+      (p) => (p.chainId ?? "").toLowerCase() === PREFERRED_CHAIN,
+    );
+    const candidates = mainnet.length > 0 ? mainnet : pairs;
+
+    const scored = candidates
+      .map((p) => {
+        const raw = p.priceUsd;
+        if (raw === undefined || raw === null) return null;
+        const n = Number(String(raw).replace(/,/g, ""));
+        if (!Number.isFinite(n) || n < MIN_SANE_PRICE_USD) return null;
+        const liq = Number(p.liquidity?.usd ?? 0);
+        const vol = Number(p.volume?.h24 ?? 0);
+        const score = liq * 2 + vol;
+        return { price: n, score };
+      })
+      .filter((x): x is { price: number; score: number } => x !== null);
+
+    if (scored.length === 0) {
+      throw new BadRequestException(
+        "Dexscreener: no liquid Ethereum mainnet pair with sane priceUsd",
+      );
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0].price;
+  }
+
   getCandles(params: {
     symbol: string;
     interval: string;
