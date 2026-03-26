@@ -20,5 +20,22 @@ export class EngineController {
   addAddress(@Body() body: { address: string }) {
     return this.engineManager.addAddress(body.address);
   }
+
+  @Post("signal")
+  @HttpCode(HttpStatus.OK)
+  signal(
+    @Body()
+    body: {
+      address: string;
+      token: string;
+      price: number;
+    },
+  ) {
+    return this.engineManager.handleSignalTest({
+      address: body.address,
+      token: body.token,
+      price: body.price,
+    });
+  }
 }
 

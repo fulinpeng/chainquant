@@ -98,18 +98,7 @@ export default function Home() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 bg-oo-bg p-8 text-oo-text">
-      <WalletHeader
-        left={
-          <div className="flex flex-col gap-1">
-            <h1 className="text-2xl font-semibold tracking-tight text-oo-text">
-              ChainQuant
-            </h1>
-            <p className="text-sm text-oo-text-muted">
-              Engine 控制台（数据来自 EngineManager）
-            </p>
-          </div>
-        }
-      />
+      <WalletHeader />
 
       <section className="rounded-xl border border-oo-border bg-oo-surface p-5 shadow-sm">
         <h2 className="mb-3 text-sm font-semibold text-oo-text">

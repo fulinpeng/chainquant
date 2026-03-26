@@ -5,6 +5,8 @@ export type EngineMode = "MANUAL" | "AUTO";
 
 export type CopierSignalPayload = {
   type: "BUY" | "SELL";
+  /** Optional external observed price for test/manual entry. */
+  price?: number;
 };
 
 export type EngineState = "IDLE" | "WAITING_ENTRY" | "IN_POSITION";

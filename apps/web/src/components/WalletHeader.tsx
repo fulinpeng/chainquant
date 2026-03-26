@@ -1,13 +1,9 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo } from "react";
 import { useWallet } from "@/hooks/useWallet";
 
-export default function WalletHeader({
-  left,
-}: {
-  left: ReactNode;
-}) {
+export default function WalletHeader() {
   const { isConnected, connect, disconnect } = useWallet();
 
   const walletButton = useMemo(() => {
@@ -36,7 +32,14 @@ export default function WalletHeader({
 
   return (
     <header className="flex items-center justify-between gap-4">
-      {left}
+      <div className="flex flex-col gap-1">
+        <h1 className="text-2xl font-semibold tracking-tight text-oo-text">
+          ChainQuant
+        </h1>
+        <p className="text-sm text-oo-text-muted">
+          链上跟单回调入场交易面板
+        </p>
+      </div>
       <div className="flex items-center gap-2">{walletButton}</div>
     </header>
   );

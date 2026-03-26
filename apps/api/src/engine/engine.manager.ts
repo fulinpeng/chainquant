@@ -127,6 +127,35 @@ export class EngineManager implements OnModuleDestroy {
     return engine.onSignal({ type: signal.type });
   }
 
+  /**
+   * Minimal testing entry for Engine system.
+   * - Auto create/reuse engine by (address, token)
+   * - Auto start when not running
+   * - Trigger one manual signal (BUY) to drive FSM into WAITING_ENTRY
+   */
+  handleSignalTest(input: {
+    address: string;
+    token: string;
+    price: number;
+  }): OnSignalResult {
+    const address = (input.address ?? "").trim();
+    const token = (input.token ?? "").trim();
+    const price = Number(input.price);
+    if (!address || !token) {
+      throw new BadRequestException("address and token are required");
+    }
+    if (!Number.isFinite(price) || price <= 0) {
+      throw new BadRequestException("price must be a positive number");
+    }
+
+    const engine = this.getOrCreateEngine(address, token);
+    if (!engine.isRunning()) {
+      engine.start();
+      this.notifyEngineStarted();
+    }
+    return engine.onSignal({ type: "BUY", price });
+  }
+
   async tick(): Promise<void> {
     if (this.tickInFlight) return;
     this.tickInFlight = true;

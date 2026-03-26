@@ -115,30 +115,27 @@ export default function EngineDetailPage({
 
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 bg-oo-bg p-8 text-oo-text">
-      <WalletHeader
-        left={
-          <div className="flex items-start gap-4">
-            <div className="flex flex-col gap-1">
-              <h1 className="text-2xl font-semibold tracking-tight text-oo-text">
-                Engine 详情
-              </h1>
-              <p className="text-xs text-oo-text-muted">
-                address: <span className="font-mono text-oo-text">{address}</span>
-              </p>
-              <p className="text-xs text-oo-text-muted">
-                token: <span className="font-mono text-oo-text">{token}</span>
-              </p>
-            </div>
+      <WalletHeader />
 
-            <Link
-              href="/"
-              className="rounded-lg border border-oo-border-strong px-4 py-2 text-sm text-oo-text-secondary transition hover:bg-oo-surface-hover"
-            >
-              Back
-            </Link>
+      <section className="rounded-xl border border-oo-border bg-oo-surface p-5 shadow-sm">
+        <h2 className="mb-3 text-sm font-semibold text-oo-text">Engine 详情</h2>
+        <div className="flex flex-wrap items-start gap-3">
+          <Link
+            href="/"
+            className="rounded-lg border border-oo-border-strong px-4 py-2 text-sm text-oo-text-secondary transition hover:bg-oo-surface-hover"
+          >
+            Back
+          </Link>
+          <div className="min-w-0">
+            <p className="text-xs text-oo-text-muted">
+              address: <span className="font-mono text-oo-text break-all">{address}</span>
+            </p>
+            <p className="text-xs text-oo-text-muted">
+              token: <span className="font-mono text-oo-text break-all">{token}</span>
+            </p>
           </div>
-        }
-      />
+        </div>
+      </section>
 
       {error && (
         <section className="rounded-xl border border-oo-border bg-oo-surface p-5 shadow-sm">

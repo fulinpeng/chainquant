@@ -124,7 +124,7 @@ export class TradingEngine {
       id: createEntityId(),
       token: this.token,
       type: signal.type,
-      price: this.currentPrice ?? 0,
+      price: signal.price ?? this.currentPrice ?? 0,
       createdAt: Date.now(),
     };
     this.stateStore.setSignal(domainSignal);
