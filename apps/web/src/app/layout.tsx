@@ -13,8 +13,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN">
-      <body className="antialiased">
+    <html lang="zh-CN" className="bg-oo-bg">
+      <body className="min-h-screen bg-oo-bg font-sans text-oo-text antialiased">
         <Web3Provider>{children}</Web3Provider>
       </body>
     </html>

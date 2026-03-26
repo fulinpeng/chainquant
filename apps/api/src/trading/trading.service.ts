@@ -34,7 +34,7 @@ export type TradingBacktestResponse = {
   stats: BacktestStats;
 };
 
-function computeAtrSimpleAvgHighLow(
+export function computeAtrSimpleAvgHighLow(
   candles: MarketCandle[],
   endIndex: number,
   period: number,
@@ -59,6 +59,17 @@ function maybeCloseLong(candle: MarketCandle, pos: Position) {
 
 @Injectable()
 export class TradingService {
+  /**
+   * Shared ATR helper for engines / backtests (not the full `run()` pipeline).
+   */
+  computeAtr(
+    candles: MarketCandle[],
+    endIndex: number,
+    period = 14,
+  ): number | null {
+    return computeAtrSimpleAvgHighLow(candles, endIndex, period);
+  }
+
   run(candles: MarketCandle[], signals: Signal[]): TradingBacktestResponse {
     const trades: TradeRecord[] = [];
 
@@ -101,7 +112,7 @@ export class TradingService {
         } else {
           // Rule: price <= entryPrice => enter long. We use candle.low as "touched".
           if (candle.low <= pending.entryPrice) {
-            const atr = computeAtrSimpleAvgHighLow(candles, i, atrPeriod);
+            const atr = this.computeAtr(candles, i, atrPeriod);
             if (atr !== null && Number.isFinite(atr) && atr > 0) {
               const entryPrice = pending.entryPrice;
               const stopLoss = entryPrice - atr * 2;

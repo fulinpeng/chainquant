@@ -1,28 +1,42 @@
 @import "tailwindcss";
 
+/* OpenOcean portal–inspired dark theme (readable on dark backgrounds) */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --oo-bg: #1e1e1e;
+  --oo-surface: #252525;
+  --oo-surface-hover: #2e2e2e;
+  --oo-border: rgba(255, 255, 255, 0.1);
+  --oo-border-strong: #454545;
+  --oo-text: #ffffff;
+  --oo-text-secondary: rgba(255, 255, 255, 0.85);
+  --oo-text-muted: rgba(255, 255, 255, 0.6);
+  --oo-primary: #3070f6;
+  --oo-primary-hover: #2563eb;
+  --oo-success: #00c076;
+  --oo-error: #f84960;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-oo-bg: var(--oo-bg);
+  --color-oo-surface: var(--oo-surface);
+  --color-oo-surface-hover: var(--oo-surface-hover);
+  --color-oo-border: var(--oo-border);
+  --color-oo-border-strong: var(--oo-border-strong);
+  --color-oo-text: var(--oo-text);
+  --color-oo-text-secondary: var(--oo-text-secondary);
+  --color-oo-text-muted: var(--oo-text-muted);
+  --color-oo-primary: var(--oo-primary);
+  --color-oo-primary-hover: var(--oo-primary-hover);
+  --color-oo-success: var(--oo-success);
+  --color-oo-error: var(--oo-error);
   --font-sans:
     "Inter", "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei", sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--oo-bg);
+  color: var(--oo-text);
+  font-family: var(--font-sans);
 }
