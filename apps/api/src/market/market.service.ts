@@ -88,30 +88,7 @@ function parseOpenTimeToUnixSeconds(openTime: string): number {
 
 @Injectable()
 export class MarketService {
-  /**
-   * Latest token price in USD from Dexscreener (MVP: fixed ETH / WETH).
-   */
-  async getLatestPrice(): Promise<number> {
-    const url = `https://api.dexscreener.com/latest/dex/tokens/${DEXSCREENER_ETH_TOKEN}`;
-    let res: Response;
-    try {
-      res = await fetch(url, { method: "GET" });
-    } catch {
-      throw new BadRequestException("Dexscreener request failed (network)");
-    }
-
-    if (!res.ok) {
-      throw new BadRequestException(
-        `Dexscreener request failed (${res.status})`,
-      );
-    }
-
-    const data = (await res.json()) as DexscreenerTokenResponse;
-    const pairs = data.pairs;
-    if (!Array.isArray(pairs) || pairs.length === 0) {
-      throw new BadRequestException("Dexscreener returned no pairs for token");
-    }
-
+  private pickBestDexPrice(pairs: DexscreenerPair[]): number {
     const mainnet = pairs.filter(
       (p) => (p.chainId ?? "").toLowerCase() === PREFERRED_CHAIN,
     );
@@ -135,9 +112,46 @@ export class MarketService {
         "Dexscreener: no liquid Ethereum mainnet pair with sane priceUsd",
       );
     }
-
     scored.sort((a, b) => b.score - a.score);
     return scored[0].price;
+  }
+
+  /**
+   * Latest token price in USD from Dexscreener (MVP: fixed ETH / WETH).
+   */
+  async getLatestPrice(): Promise<number> {
+    return this.getLatestPriceByToken(DEXSCREENER_ETH_TOKEN);
+  }
+
+  /**
+   * Latest token price in USD from Dexscreener for a specific ERC20 token.
+   */
+  async getLatestPriceByToken(tokenAddress: string): Promise<number> {
+    const token = (tokenAddress ?? "").trim();
+    if (!token) {
+      throw new BadRequestException("tokenAddress is required");
+    }
+
+    const url = `https://api.dexscreener.com/latest/dex/tokens/${token}`;
+    let res: Response;
+    try {
+      res = await fetch(url, { method: "GET" });
+    } catch {
+      throw new BadRequestException("Dexscreener request failed (network)");
+    }
+
+    if (!res.ok) {
+      throw new BadRequestException(
+        `Dexscreener request failed (${res.status})`,
+      );
+    }
+
+    const data = (await res.json()) as DexscreenerTokenResponse;
+    const pairs = data.pairs;
+    if (!Array.isArray(pairs) || pairs.length === 0) {
+      throw new BadRequestException("Dexscreener returned no pairs for token");
+    }
+    return this.pickBestDexPrice(pairs);
   }
 
   getCandles(params: {
