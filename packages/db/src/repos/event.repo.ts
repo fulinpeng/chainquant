@@ -1,10 +1,10 @@
 import type { Event as EventRecord } from "@prisma/client";
 import { prisma } from "../client";
 
-/** 与 Prisma `Event` 模型一致；避免与 DOM Event 混淆时使用别名。 */
-export type EventRow = EventRecord;
+/** 与数据库 `Event` 行一致；命名避免与浏览器 `Event` 混淆。 */
+export type { EventRecord };
 
-export type AppendEventInput = {
+export type CreateEventData = {
   id?: string;
   type: string;
   message: string;
@@ -14,30 +14,31 @@ export type AppendEventInput = {
 };
 
 export const eventRepo = {
-  async append(input: AppendEventInput) {
+  async createEvent(data: CreateEventData): Promise<EventRecord> {
     return prisma.event.create({
       data: {
-        ...(input.id ? { id: input.id } : {}),
-        type: input.type,
-        message: input.message,
-        txHash: input.txHash ?? null,
-        stage: input.stage ?? null,
-        ...(input.watcherId != null && input.watcherId !== ""
-          ? { watcher: { connect: { id: input.watcherId } } }
+        ...(data.id ? { id: data.id } : {}),
+        type: data.type,
+        message: data.message,
+        txHash: data.txHash ?? null,
+        stage: data.stage ?? null,
+        ...(data.watcherId != null && data.watcherId !== ""
+          ? { watcher: { connect: { id: data.watcherId } } }
           : {}),
       },
     });
   },
 
-  async listRecent(params: { watcherId?: string | null; limit: number }) {
-    const take = Math.min(Math.max(1, params.limit), 500);
+  /**
+   * 按监听地址聚合：通过 `Watcher.address` 关联。
+   * 无 `watcherId` 的孤立事件不会出现在结果中。
+   */
+  async listEventsByAddress(address: string): Promise<EventRecord[]> {
     return prisma.event.findMany({
-      where:
-        params.watcherId != null && params.watcherId !== ""
-          ? { watcherId: params.watcherId }
-          : {},
+      where: {
+        watcher: { address: address.toLowerCase() },
+      },
       orderBy: { createdAt: "desc" },
-      take,
     });
   },
 };
