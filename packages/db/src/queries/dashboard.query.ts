@@ -9,6 +9,14 @@ export type DashboardView = {
   recentTrades: TradeListItem[];
 };
 
+export type DashboardSummary = {
+  address: string;
+  totalPnl: number;
+  winRate: number;
+  totalTrades: number;
+  openPositions: number;
+};
+
 const PAPER_BASE_BALANCE = 10000;
 
 export const dashboardQuery = {
@@ -26,6 +34,24 @@ export const dashboardQuery = {
       totalTrades: summary.totalTrades,
       openPositions: openPositions.length,
       recentTrades: recentTrades.slice(0, 10),
+    };
+  },
+
+  async getGlobalSummary(): Promise<DashboardSummary> {
+    const [allTrades, closedTrades, openPositions] = await Promise.all([
+      tradeQuery.listAllTrades(),
+      tradeQuery.listAllClosedTrades(),
+      tradeQuery.countOpenPositions(),
+    ]);
+    const totalPnl = closedTrades.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+    const totalTrades = closedTrades.length;
+    const winTrades = closedTrades.filter((t) => (t.pnl ?? 0) > 0).length;
+    return {
+      address: "--",
+      totalPnl,
+      winRate: totalTrades > 0 ? winTrades / totalTrades : 0,
+      totalTrades,
+      openPositions,
     };
   },
 };

@@ -1,8 +1,10 @@
 "use client";
 
+import { useParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WalletHeader from "@/components/WalletHeader";
-import PageTabs from "@/components/PageTabs";
+import StatsSummaryCards from "@/components/StatsSummaryCards";
 
 type TradeItem = {
   id: string;
@@ -37,11 +39,6 @@ function fmtNum(n: number, digits = 4) {
   return n.toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
-function fmtPct(n: number) {
-  if (!Number.isFinite(n)) return "--";
-  return `${(n * 100).toFixed(2)}%`;
-}
-
 function fmtTime(raw: string) {
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return "--";
@@ -49,12 +46,13 @@ function fmtTime(raw: string) {
 }
 
 export default function HomePage() {
+  const router = useRouter();
+  const routeParams = useParams<{ address?: string }>();
   const apiBaseUrl = useMemo(
     () => process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001",
     [],
   );
-  const [addressInput, setAddressInput] = useState("");
-  const [activeAddress, setActiveAddress] = useState("");
+  const activeAddress = decodeURIComponent(routeParams?.address ?? "").trim().toLowerCase();
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,46 +97,35 @@ export default function HomePage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 bg-oo-bg p-8 text-oo-text">
       <WalletHeader />
-      <PageTabs />
+      <div>
+        <button
+          type="button"
+          onClick={() => router.push("/")}
+          className="rounded-lg border border-oo-border-strong px-3 py-1.5 text-xs text-oo-text-secondary transition hover:bg-oo-surface-hover"
+        >
+          返回首页
+        </button>
+      </div>
 
-      <section className="rounded-xl border border-oo-border bg-oo-surface p-5 shadow-sm">
-        <h2 className="mb-3 text-sm font-semibold text-oo-text">地址看板（数据库查询）</h2>
-        <div className="flex flex-col gap-3 md:flex-row">
-          <input
-            value={addressInput}
-            onChange={(e) => setAddressInput(e.target.value)}
-            placeholder="输入地址，例如 0x..."
-            className="w-full rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 font-mono text-sm text-oo-text outline-none placeholder:text-oo-text-muted focus:border-oo-primary focus:ring-1 focus:ring-oo-primary"
-          />
-          <button
-            type="button"
-            onClick={() => setActiveAddress(addressInput.trim().toLowerCase())}
-            className="rounded-lg bg-oo-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-oo-primary-hover"
-          >
-            查询
-          </button>
-        </div>
-        {error && <p className="mt-3 text-sm text-oo-error">{error}</p>}
-      </section>
-
-      <section className="grid gap-3 md:grid-cols-4">
-        <div className="rounded-xl border border-oo-border bg-oo-surface p-4">
-          <p className="text-xs text-oo-text-muted">Address</p>
-          <p className="mt-2 font-mono text-sm text-oo-text">{shortAddr(activeAddress)}</p>
-        </div>
-        <div className="rounded-xl border border-oo-border bg-oo-surface p-4">
-          <p className="text-xs text-oo-text-muted">总收益</p>
-          <p className="mt-2 text-lg font-semibold text-oo-text">{fmtNum(dashboard?.totalPnl ?? NaN)}</p>
-        </div>
-        <div className="rounded-xl border border-oo-border bg-oo-surface p-4">
-          <p className="text-xs text-oo-text-muted">胜率</p>
-          <p className="mt-2 text-lg font-semibold text-oo-text">{fmtPct(dashboard?.winRate ?? NaN)}</p>
-        </div>
-        <div className="rounded-xl border border-oo-border bg-oo-surface p-4">
-          <p className="text-xs text-oo-text-muted">Open Positions</p>
-          <p className="mt-2 text-lg font-semibold text-oo-text">{dashboard?.openPositions ?? 0}</p>
-        </div>
-      </section>
+      <StatsSummaryCards
+        title=""
+        data={
+          dashboard
+            ? {
+                address: activeAddress || "--",
+                totalPnl: dashboard.totalPnl,
+                winRate: dashboard.winRate,
+                openPositions: dashboard.openPositions,
+              }
+            : {
+                address: activeAddress || "--",
+                totalPnl: Number.NaN,
+                winRate: Number.NaN,
+                openPositions: 0,
+              }
+        }
+      />
+      {error && <p className="text-sm text-oo-error">{error}</p>}
 
       <section className="rounded-xl border border-oo-border bg-oo-surface p-5 shadow-sm">
         <div className="mb-3 flex items-center justify-between">

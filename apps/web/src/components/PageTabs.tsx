@@ -9,12 +9,13 @@ const TABS = [
 ];
 
 export default function PageTabs() {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
 
   return (
     <nav className="flex items-center gap-2">
       {TABS.map((tab) => {
-        const active = tab.href === "/" ? pathname === "/" : pathname === tab.href;
+        const active =
+          tab.href === "/" ? pathname === "/" : pathname === tab.href || pathname.startsWith("/stats/");
 
         return (
           <Link

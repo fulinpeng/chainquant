@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import WalletHeader from "@/components/WalletHeader";
-import PageTabs from "@/components/PageTabs";
+import StatsSummaryCards from "@/components/StatsSummaryCards";
 import { useWallet } from "@/hooks/useWallet";
 
 type WatcherItem = {
@@ -30,6 +30,14 @@ type EngineListItem = {
   token: string;
 };
 
+type GlobalStats = {
+  address: string;
+  totalPnl: number;
+  winRate: number;
+  totalTrades: number;
+  openPositions: number;
+};
+
 function maskAddress(address: string) {
   if (!address) return "--";
   if (address.length <= 10) return address;
@@ -51,6 +59,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [watcherList, setWatcherList] = useState<WatcherItem[]>([]);
   const [engineList, setEngineList] = useState<EngineListItem[]>([]);
+  const [globalStats, setGlobalStats] = useState<GlobalStats | null>(null);
   const [editing, setEditing] = useState<WatcherItem | null>(null);
   const [editConfig, setEditConfig] = useState({
     riskPerTrade: "",
@@ -104,18 +113,31 @@ export default function Home() {
     }
   }, [apiBaseUrl]);
 
+  const fetchGlobalStats = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBaseUrl}/stats/global`);
+      const data = (await res.json()) as unknown;
+      if (!res.ok) return;
+      setGlobalStats(data as GlobalStats);
+    } catch {
+      // ignore on home page
+    }
+  }, [apiBaseUrl]);
+
   useEffect(() => {
     void fetchWatcherList();
     void fetchEngineList();
+    void fetchGlobalStats();
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(() => {
       void fetchWatcherList();
       void fetchEngineList();
+      void fetchGlobalStats();
     }, 3000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [fetchWatcherList, fetchEngineList]);
+  }, [fetchWatcherList, fetchEngineList, fetchGlobalStats]);
 
   async function addWatcher() {
     const addr = inputAddress.trim();
@@ -190,6 +212,10 @@ export default function Home() {
     router.push(`/copier/${encodeURIComponent(w.address)}/${encodeURIComponent(engine.token)}`);
   }
 
+  function viewStats(w: WatcherItem) {
+    router.push(`/stats/${encodeURIComponent(w.address)}`);
+  }
+
   function openEdit(w: WatcherItem) {
     setEditing(w);
     setEditConfig({
@@ -257,7 +283,7 @@ export default function Home() {
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 bg-oo-bg p-8 text-oo-text">
       <WalletHeader />
-      <PageTabs />
+      <StatsSummaryCards data={globalStats} title="全局统计（全部地址）" />
 
       <section className="rounded-xl border border-oo-border bg-oo-surface p-5 shadow-sm">
         <h2 className="mb-3 text-sm font-semibold text-oo-text">Watcher 管理</h2>
@@ -409,6 +435,13 @@ export default function Home() {
                           }`}
                         >
                           View
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => viewStats(w)}
+                          className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
+                        >
+                          Stats
                         </button>
                       </div>
                     </td>

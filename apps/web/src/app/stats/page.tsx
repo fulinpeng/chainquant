@@ -1,1 +1,5 @@
-export { default } from "@/pages/stats-page";
+import { redirect } from "next/navigation";
+
+export default function StatsEntryPage() {
+  redirect("/");
+}

@@ -98,4 +98,25 @@ export const tradeQuery = {
       totalTrades,
     };
   },
+
+  async listAllTrades(): Promise<TradeListItem[]> {
+    return prisma.trade.findMany({
+      select: tradeSelect,
+      orderBy: { createdAt: "desc" },
+    });
+  },
+
+  async listAllClosedTrades(): Promise<TradeListItem[]> {
+    return prisma.trade.findMany({
+      where: { status: "CLOSED" },
+      select: tradeSelect,
+      orderBy: { createdAt: "desc" },
+    });
+  },
+
+  async countOpenPositions(): Promise<number> {
+    return prisma.trade.count({
+      where: { status: "OPEN" },
+    });
+  },
 };
