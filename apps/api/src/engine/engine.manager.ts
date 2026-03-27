@@ -6,7 +6,8 @@ import {
 } from "@nestjs/common";
 import { MarketService } from "../market/market.service";
 import { TradingEngine } from "./trading-engine";
-import type { CopierSignalPayload, OnSignalResult } from "./types";
+import type { CopierSignalPayload, EngineRuntimeConfig, OnSignalResult } from "./types";
+import { DEFAULT_ENGINE_RUNTIME_CONFIG } from "./types";
 import { ENGINE_TICK_MS } from "./types";
 import type { EngineStatusDto } from "./types";
 
@@ -28,7 +29,11 @@ export class EngineManager implements OnModuleDestroy {
     return `${address.trim()}_${token.trim()}`;
   }
 
-  getOrCreateEngine(address: string, token: string): TradingEngine {
+  getOrCreateEngine(
+    address: string,
+    token: string,
+    config: EngineRuntimeConfig = DEFAULT_ENGINE_RUNTIME_CONFIG,
+  ): TradingEngine {
     const a = address.trim();
     const t = token.trim();
     if (!a || !t) {
@@ -37,9 +42,16 @@ export class EngineManager implements OnModuleDestroy {
     const key = this.makeKey(a, t);
     let engine = this.engines.get(key);
     if (!engine) {
-      engine = new TradingEngine(this.marketService, a, t);
+      engine = new TradingEngine({
+        marketService: this.marketService,
+        address: a,
+        token: t,
+        config,
+      });
       this.engines.set(key, engine);
       this.logger.log(`Created engine ${key}`);
+    } else {
+      engine.updateConfig(config);
     }
     return engine;
   }
@@ -146,14 +158,18 @@ export class EngineManager implements OnModuleDestroy {
    */
   handleSignal(
     address: string,
-    signal: CopierSignalPayload & { token?: string },
+    signal: CopierSignalPayload & { token?: string; config?: EngineRuntimeConfig },
   ): OnSignalResult {
     const a = address.trim();
     const token = (signal.token ?? a).trim();
     if (!a || !token) {
       throw new BadRequestException("address and token are required");
     }
-    const engine = this.getOrCreateEngine(a, token);
+    const engine = this.getOrCreateEngine(
+      a,
+      token,
+      signal.config ?? DEFAULT_ENGINE_RUNTIME_CONFIG,
+    );
     if (!engine.isRunning()) {
       engine.start();
       this.notifyEngineStarted();
@@ -189,6 +205,7 @@ export class EngineManager implements OnModuleDestroy {
       type: "BUY",
       token,
       price,
+      config: DEFAULT_ENGINE_RUNTIME_CONFIG,
     });
   }
 

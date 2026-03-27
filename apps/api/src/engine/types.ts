@@ -3,6 +3,22 @@ import type { Trade } from "../domain/trade";
 
 export type EngineMode = "MANUAL" | "AUTO";
 
+export type EngineRuntimeConfig = {
+  riskPerTrade: number;
+  stopLossPct: number;
+  takeProfitPct: number;
+  delayEntry: boolean;
+  maxPositions: number;
+};
+
+export const DEFAULT_ENGINE_RUNTIME_CONFIG: EngineRuntimeConfig = {
+  riskPerTrade: 0.01,
+  stopLossPct: 0.0001, // 1/10000
+  takeProfitPct: 0.0002, // 2/10000
+  delayEntry: false,
+  maxPositions: 1,
+};
+
 export type CopierSignalPayload = {
   type: "BUY" | "SELL";
   /** Optional external observed price for test/manual entry. */

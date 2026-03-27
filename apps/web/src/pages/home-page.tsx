@@ -2,11 +2,21 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import WalletHeader from "@/components/WalletHeader";
 
 type WatcherItem = {
+  id: string;
   address: string;
+  chain: "ethereum" | "base" | "op" | "arb" | "bnb";
   status: "RUNNING" | "STOPPED";
+  config: {
+    riskPerTrade: number;
+    stopLossPct: number;
+    takeProfitPct: number;
+    delayEntry: boolean;
+    maxPositions: number;
+  };
   createdAt: number;
 };
 
@@ -27,12 +37,22 @@ function fmtTime(ts: number) {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [inputAddress, setInputAddress] = useState("");
   const [busy, setBusy] = useState(false);
+  const [inputChain, setInputChain] = useState<WatcherItem["chain"]>("arb");
   const [error, setError] = useState<string | null>(null);
   const [watcherList, setWatcherList] = useState<WatcherItem[]>([]);
   const [engineList, setEngineList] = useState<EngineListItem[]>([]);
+  const [editing, setEditing] = useState<WatcherItem | null>(null);
+  const [editConfig, setEditConfig] = useState({
+    riskPerTrade: "",
+    stopLossPct: "",
+    takeProfitPct: "",
+    delayEntry: false,
+    maxPositions: "",
+  });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => setMounted(true), []);
@@ -100,11 +120,12 @@ export default function Home() {
       const res = await fetch(`${apiBaseUrl}/watcher/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: addr }),
+        body: JSON.stringify({ address: addr, chain: inputChain }),
       });
       const data = (await res.json()) as unknown;
       if (!res.ok) throw new Error(parseApiError(data, res.status));
       setInputAddress("");
+      setInputChain("arb");
       await fetchWatcherList();
     } catch (e) {
       setError(e instanceof Error ? e.message : "添加 watcher 失败");
@@ -113,13 +134,17 @@ export default function Home() {
     }
   }
 
-  async function runAction(action: "start" | "stop" | "delete", address: string) {
+  async function runAction(
+    action: "start" | "stop" | "delete",
+    address: string,
+    chain: WatcherItem["chain"],
+  ) {
     setError(null);
     try {
       const res = await fetch(`${apiBaseUrl}/watcher/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address }),
+        body: JSON.stringify({ address, chain }),
       });
       const data = (await res.json()) as unknown;
       if (!res.ok) throw new Error(parseApiError(data, res.status));
@@ -134,6 +159,60 @@ export default function Home() {
       await navigator.clipboard.writeText(address);
     } catch {
       setError("复制地址失败");
+    }
+  }
+
+  function viewWatcher(w: WatcherItem) {
+    if (w.status !== "RUNNING") {
+      setError("Watcher 未运行，无法查看详情");
+      return;
+    }
+    const engine = firstEngineByAddress.get(w.address.toLowerCase());
+    if (!engine) {
+      setError("Watcher 正在运行，但该地址下暂未生成 Engine（等待链上信号或手动触发）");
+      return;
+    }
+    setError(null);
+    router.push(`/engine/${encodeURIComponent(w.address)}/${encodeURIComponent(engine.token)}`);
+  }
+
+  function openEdit(w: WatcherItem) {
+    setEditing(w);
+    setEditConfig({
+      riskPerTrade: String(w.config.riskPerTrade),
+      stopLossPct: String(w.config.stopLossPct),
+      takeProfitPct: String(w.config.takeProfitPct),
+      delayEntry: Boolean(w.config.delayEntry),
+      maxPositions: String(w.config.maxPositions),
+    });
+  }
+
+  async function saveEditConfig() {
+    if (!editing) return;
+    const payload = {
+      riskPerTrade: Number(editConfig.riskPerTrade),
+      stopLossPct: Number(editConfig.stopLossPct),
+      takeProfitPct: Number(editConfig.takeProfitPct),
+      delayEntry: Boolean(editConfig.delayEntry),
+      maxPositions: Number(editConfig.maxPositions),
+    };
+    setError(null);
+    try {
+      const res = await fetch(`${apiBaseUrl}/watcher/update-config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address: editing.address,
+          chain: editing.chain,
+          config: payload,
+        }),
+      });
+      const data = (await res.json()) as unknown;
+      if (!res.ok) throw new Error(parseApiError(data, res.status));
+      setEditing(null);
+      await fetchWatcherList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "update-config 失败");
     }
   }
 
@@ -171,6 +250,20 @@ export default function Home() {
               className="w-full rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 font-mono text-sm text-oo-text outline-none placeholder:text-oo-text-muted focus:border-oo-primary focus:ring-1 focus:ring-oo-primary"
             />
           </label>
+          <label className="flex flex-col gap-1 text-xs text-oo-text-muted">
+            Chain
+            <select
+              value={inputChain}
+              onChange={(e) => setInputChain(e.target.value as WatcherItem["chain"])}
+              className="w-full rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text outline-none focus:border-oo-primary focus:ring-1 focus:ring-oo-primary"
+            >
+              <option value="arb">arb</option>
+              <option value="ethereum">ethereum</option>
+              <option value="base">base</option>
+              <option value="op">op</option>
+              <option value="bnb">bnb</option>
+            </select>
+          </label>
           <div className="flex items-end">
             <button
               type="button"
@@ -202,6 +295,9 @@ export default function Home() {
               <tr>
                 <th className="px-3 py-2 font-medium">address</th>
                 <th className="px-3 py-2 font-medium">status</th>
+                <th className="px-3 py-2 font-medium">riskPerTrade</th>
+                <th className="px-3 py-2 font-medium">stopLoss</th>
+                <th className="px-3 py-2 font-medium">takeProfit</th>
                 <th className="px-3 py-2 font-medium">createdAt</th>
                 <th className="px-3 py-2 font-medium">操作</th>
               </tr>
@@ -209,13 +305,13 @@ export default function Home() {
             <tbody className="divide-y divide-oo-border text-oo-text-secondary">
               {watcherList.length === 0 ? (
                 <tr>
-                  <td className="px-3 py-4 text-oo-text-muted" colSpan={4}>
+                  <td className="px-3 py-4 text-oo-text-muted" colSpan={7}>
                     暂无 Watcher；请先添加 address。
                   </td>
                 </tr>
               ) : (
                 watcherList.map((w) => (
-                  <tr key={w.address}>
+                  <tr key={w.id}>
                     <td className="px-3 py-2 font-mono text-xs text-oo-text">
                       <button
                         type="button"
@@ -238,6 +334,15 @@ export default function Home() {
                       </span>
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-oo-text">
+                      {w.config.riskPerTrade}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
+                      {w.config.stopLossPct}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
+                      {w.config.takeProfitPct}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
                       {fmtTime(w.createdAt)}
                     </td>
                     <td className="px-3 py-2 text-xs">
@@ -245,7 +350,7 @@ export default function Home() {
                         {w.status === "RUNNING" ? (
                           <button
                             type="button"
-                            onClick={() => void runAction("stop", w.address)}
+                            onClick={() => void runAction("stop", w.address, w.chain)}
                             className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
                           >
                             Stop
@@ -253,7 +358,7 @@ export default function Home() {
                         ) : (
                           <button
                             type="button"
-                            onClick={() => void runAction("start", w.address)}
+                            onClick={() => void runAction("start", w.address, w.chain)}
                             className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
                           >
                             Start
@@ -261,23 +366,29 @@ export default function Home() {
                         )}
                         <button
                           type="button"
-                          onClick={() => void runAction("delete", w.address)}
+                          onClick={() => void runAction("delete", w.address, w.chain)}
                           className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
                         >
                           Delete
                         </button>
-                        {firstEngineByAddress.get(w.address.toLowerCase()) ? (
-                          <Link
-                            href={`/engine/${encodeURIComponent(w.address)}/${encodeURIComponent(firstEngineByAddress.get(w.address.toLowerCase())!.token)}`}
-                            className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
-                          >
-                            View
-                          </Link>
-                        ) : (
-                          <span className="rounded-md border border-oo-border px-3 py-1.5 text-oo-text-muted">
-                            View
-                          </span>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => openEdit(w)}
+                          className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => viewWatcher(w)}
+                          className={`rounded-md border px-3 py-1.5 transition ${
+                            w.status === "RUNNING"
+                              ? "border-oo-border-strong text-oo-text-secondary hover:bg-oo-surface-hover"
+                              : "border-oo-border text-oo-text-muted"
+                          }`}
+                        >
+                          View
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -287,6 +398,87 @@ export default function Home() {
           </table>
         </div>
       </section>
+      {editing && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+          onClick={() => setEditing(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-oo-border bg-oo-surface p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="mb-3 text-base font-semibold text-oo-text">编辑 Watcher Config</h3>
+            <div className="grid gap-2">
+              <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
+                <span>riskPerTrade</span>
+                <input
+                  value={editConfig.riskPerTrade}
+                  onChange={(e) =>
+                    setEditConfig((s) => ({ ...s, riskPerTrade: e.target.value }))
+                  }
+                  className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                />
+              </label>
+              <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
+                <span>stopLossPct</span>
+                <input
+                  value={editConfig.stopLossPct}
+                  onChange={(e) =>
+                    setEditConfig((s) => ({ ...s, stopLossPct: e.target.value }))
+                  }
+                  className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                />
+              </label>
+              <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
+                <span>takeProfitPct</span>
+                <input
+                  value={editConfig.takeProfitPct}
+                  onChange={(e) =>
+                    setEditConfig((s) => ({ ...s, takeProfitPct: e.target.value }))
+                  }
+                  className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                />
+              </label>
+              <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
+                <span>maxPositions</span>
+                <input
+                  value={editConfig.maxPositions}
+                  onChange={(e) =>
+                    setEditConfig((s) => ({ ...s, maxPositions: e.target.value }))
+                  }
+                  className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                />
+              </label>
+              <label className="flex items-center gap-2 text-sm text-oo-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={editConfig.delayEntry}
+                  onChange={(e) =>
+                    setEditConfig((s) => ({ ...s, delayEntry: e.target.checked }))
+                  }
+                />
+                delayEntry
+              </label>
+            </div>
+            <div className="mt-4 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void saveEditConfig()}
+                className="rounded-lg bg-oo-primary px-4 py-2 text-sm text-white hover:bg-oo-primary-hover"
+              >
+                保存
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditing(null)}
+                className="rounded-lg border border-oo-border-strong px-4 py-2 text-sm text-oo-text-secondary"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

@@ -8,15 +8,13 @@ import type { Trade } from "../domain/trade";
 import { StateStore } from "../state/state-store.service";
 import type {
   CopierSignalPayload,
+  EngineRuntimeConfig,
   EngineResultDto,
   EngineState,
   EngineStatusDto,
   OnSignalResult,
 } from "./types";
 import { COOLDOWN_CANDLES } from "./types";
-
-const MANUAL_SL_FRACTION = 1 / 10000;
-const MANUAL_TP_FRACTION = 2 / 10000;
 
 function nowUnixSec(): number {
   return Math.floor(Date.now() / 1000);
@@ -28,10 +26,8 @@ function nowUnixSec(): number {
 export class TradingEngine {
   private readonly logger: Logger;
   private readonly stateStore = new StateStore();
-  private readonly account = {
-    balance: 10000,
-    riskPerTrade: 0.01,
-  };
+  private readonly account = { balance: 10000 };
+  private pendingSignalTick: number | null = null;
 
   private running = false;
   private candles: MarketCandle[] = [];
@@ -43,16 +39,34 @@ export class TradingEngine {
   private lastUpdateTime = 0;
   private lastExitTick: number | null = null;
 
-  constructor(
-    private readonly marketService: MarketService,
-    public readonly address: string,
-    public readonly token: string,
-  ) {
+  constructor({
+    marketService,
+    address,
+    token,
+    config,
+  }: {
+    marketService: MarketService;
+    address: string;
+    token: string;
+    config: EngineRuntimeConfig;
+  }) {
+    this.marketService = marketService;
+    this.address = address;
+    this.token = token;
+    this.config = config;
     this.logger = new Logger(`TradingEngine:${address.slice(0, 8)}_${token.slice(0, 8)}`);
   }
+  private readonly marketService: MarketService;
+  public readonly address: string;
+  public readonly token: string;
+  private config: EngineRuntimeConfig;
 
   isRunning(): boolean {
     return this.running;
+  }
+
+  updateConfig(config: EngineRuntimeConfig): void {
+    this.config = config;
   }
 
   start(): { ok: true } {
@@ -76,6 +90,7 @@ export class TradingEngine {
     this.currentPrice = null;
     this.lastUpdateTime = Date.now();
     this.lastExitTick = null;
+    this.pendingSignalTick = null;
     this.stateStore.resetTradingState();
 
     this.running = true;
@@ -112,6 +127,14 @@ export class TradingEngine {
       return { ok: true, ignored: true };
     }
 
+    if (this.config.maxPositions < 1) {
+      this.stateStore.addEvent({
+        type: "INVALID_SIGNAL",
+        message: "Signal ignored due to maxPositions < 1",
+      });
+      return { ok: true, ignored: true };
+    }
+
     if (
       this.lastExitTick !== null &&
       this.tickCount - this.lastExitTick < COOLDOWN_CANDLES
@@ -133,6 +156,7 @@ export class TradingEngine {
     };
     this.stateStore.setSignal(domainSignal);
     this.state = "WAITING_ENTRY";
+    this.pendingSignalTick = this.tickCount;
     this.stateStore.addEvent({
       type: "SIGNAL",
       message: signal.type,
@@ -178,13 +202,20 @@ export class TradingEngine {
             break;
           }
           if (this.mode !== "MANUAL") break;
+          if (
+            this.config.delayEntry &&
+            this.pendingSignalTick !== null &&
+            this.tickCount <= this.pendingSignalTick
+          ) {
+            break;
+          }
 
           const entryPrice = livePrice;
           const sig = pendingSignal;
 
           if (sig.type === "BUY") {
-            const stopLoss = entryPrice * (1 - MANUAL_SL_FRACTION);
-            const takeProfit = entryPrice * (1 + MANUAL_TP_FRACTION);
+            const stopLoss = entryPrice * (1 - this.config.stopLossPct);
+            const takeProfit = entryPrice * (1 + this.config.takeProfitPct);
             const size = this.computePositionSize(entryPrice, stopLoss);
             this.stateStore.setPosition({
               id: createEntityId(),
@@ -198,8 +229,8 @@ export class TradingEngine {
               status: "OPEN",
             });
           } else {
-            const stopLoss = entryPrice * (1 + MANUAL_SL_FRACTION);
-            const takeProfit = entryPrice * (1 - MANUAL_TP_FRACTION);
+            const stopLoss = entryPrice * (1 + this.config.stopLossPct);
+            const takeProfit = entryPrice * (1 - this.config.takeProfitPct);
             const size = this.computePositionSize(entryPrice, stopLoss);
             this.stateStore.setPosition({
               id: createEntityId(),
@@ -237,6 +268,7 @@ export class TradingEngine {
             });
           }
           this.stateStore.setSignal(null);
+          this.pendingSignalTick = null;
           this.state = "IN_POSITION";
           break;
         }
@@ -388,7 +420,7 @@ export class TradingEngine {
   }
 
   private computePositionSize(entryPrice: number, stopLoss: number): number {
-    const riskAmount = this.account.balance * this.account.riskPerTrade;
+    const riskAmount = this.account.balance * this.config.riskPerTrade;
     const stopLossDistance = Math.abs(entryPrice - stopLoss);
     if (!Number.isFinite(stopLossDistance) || stopLossDistance <= 0) {
       return 0;

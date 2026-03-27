@@ -7,14 +7,23 @@ import {
 } from "@nestjs/common";
 import { WebSocketProvider } from "ethers";
 import { EngineManager } from "../engine/engine.manager";
+import type { EngineRuntimeConfig } from "../engine/types";
 import { MarketService } from "../market/market.service";
 import { ParserService } from "./parser.service";
 import { CHAINS, type ChainKey } from "../config/chains";
+
+type ActiveWatcherSnapshot = {
+  address: string;
+  chain: ChainKey;
+  status: "RUNNING" | "STOPPED";
+  config: EngineRuntimeConfig;
+};
 
 @Injectable()
 export class ListenerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ListenerService.name);
   private readonly providers = new Map<ChainKey, WebSocketProvider>();
+  private readonly activeWatchers = new Map<string, ActiveWatcherSnapshot>();
   private started = false;
 
   constructor(
@@ -39,12 +48,32 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
     this.started = false;
   }
 
-  addAddress(address: string): { ok: true } {
-    return this.engineManager.addAddress(address);
+  upsertWatcher(watcher: ActiveWatcherSnapshot): { ok: true } {
+    const key = this.makeWatcherKey(watcher.address, watcher.chain);
+    if (watcher.status === "RUNNING") {
+      this.activeWatchers.set(key, {
+        ...watcher,
+        address: watcher.address.toLowerCase(),
+      });
+    } else {
+      this.activeWatchers.delete(key);
+    }
+    return { ok: true };
   }
 
-  removeAddress(address: string): { ok: true } {
-    return this.engineManager.removeAddress(address);
+  removeWatcher(address: string, chain?: ChainKey): { ok: true } {
+    const normalized = (address ?? "").trim().toLowerCase();
+    if (!normalized) return { ok: true };
+    if (chain) {
+      this.activeWatchers.delete(this.makeWatcherKey(normalized, chain));
+      return { ok: true };
+    }
+    for (const k of [...this.activeWatchers.keys()]) {
+      if (k.startsWith(`${normalized}_`)) {
+        this.activeWatchers.delete(k);
+      }
+    }
+    return { ok: true };
   }
 
   async replayTx(input: { txHash: string; chain?: ChainKey }) {
@@ -60,17 +89,25 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      const tx = await provider.getTransaction(txHash);
+      const tx = await this.withTimeout(
+        provider.getTransaction(txHash),
+        12000,
+        "getTransaction timeout",
+      );
       if (!tx) {
         throw new BadRequestException(`tx not found: ${txHash}`);
       }
 
-      const result = await this.processWatchedTx(chainKey, provider, txHash, {
-        hash: tx.hash,
-        from: tx.from,
-        to: tx.to,
-        data: tx.data,
-      });
+      const result = await this.withTimeout(
+        this.processWatchedTx(chainKey, provider, txHash, {
+          hash: tx.hash,
+          from: tx.from,
+          to: tx.to,
+          data: tx.data,
+        }),
+        18000,
+        "processWatchedTx timeout",
+      );
 
       return {
         ok: Boolean(result && result.hit),
@@ -174,7 +211,8 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
       }
   > {
     const from = (tx.from ?? "").toLowerCase();
-    if (!from || !this.engineManager.isWatchedAddress(from)) {
+    const watcher = this.getActiveWatcher(from, chainKey);
+    if (!watcher) {
       return { hit: false, reason: "address_not_watched" };
     }
 
@@ -222,6 +260,7 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
         type: parsed.type,
         token: parsed.token,
         price,
+        config: watcher.config,
       });
       this.logger.log(`Signal from chain tx: ${from} ${parsed.type} ${parsed.token}`);
       return { hit: true, from, token: parsed.token, side: parsed.type };
@@ -231,6 +270,31 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
       );
       return { hit: false, reason: "handle_signal_failed" };
     }
+  }
+
+  private makeWatcherKey(address: string, chain: ChainKey): string {
+    return `${(address ?? "").trim().toLowerCase()}_${chain}`;
+  }
+
+  private getActiveWatcher(address: string, chain: ChainKey): ActiveWatcherSnapshot | null {
+    const key = this.makeWatcherKey(address, chain);
+    const watcher = this.activeWatchers.get(key);
+    if (!watcher) return null;
+    if (watcher.status !== "RUNNING") return null;
+    return watcher;
+  }
+
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    message: string,
+  ): Promise<T> {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
   }
 }
 
