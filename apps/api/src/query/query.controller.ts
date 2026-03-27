@@ -3,7 +3,7 @@ import { dashboardQuery, eventQuery, tradeQuery } from "@chainquant/db";
 
 @Controller()
 export class QueryController {
-  @Get("dashboard/:address")
+  @Get("stats/:address")
   async getDashboard(@Param("address") address: string) {
     return dashboardQuery.getDashboard(address);
   }
