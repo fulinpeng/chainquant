@@ -176,13 +176,12 @@ export class TradingEngine {
     const wrapped = CHAINS.arb.wrappedNative.address;
     const tokenIn = signal.type === "BUY" ? wrapped : this.token;
     const tokenOut = signal.type === "BUY" ? this.token : wrapped;
-    const requestedAmount = this.parseRawAmountToFloat(signal.amount);
     void this.executionService
       .execute({
         mode: this.config.mode,
         tokenIn,
         tokenOut,
-        amountIn: requestedAmount ?? this.config.maxTradeAmount,
+        amountInRaw: signal.amount,
         maxTradeAmount: this.config.maxTradeAmount,
         slippage: this.config.slippage,
       })
@@ -195,9 +194,12 @@ export class TradingEngine {
           return;
         }
         if (result.mode === "live" && result.txHash) {
+          const quoteInfo = result.debug
+            ? `amountIn=${result.debug.amountIn} quoteOut=${result.debug.quoteAmountOut} minOut=${result.debug.minOut} slippage=${result.debug.slippage}`
+            : "quote=na";
           this.stateStore.addEvent({
-            type: "SIGNAL",
-            message: `Live tx sent: ${result.txHash}`,
+            type: "EXECUTION",
+            message: `Live tx sent: ${result.txHash} | ${quoteInfo}`,
           });
         }
       })
@@ -208,13 +210,6 @@ export class TradingEngine {
           message: `Execution crashed: ${msg}`,
         });
       });
-  }
-
-  private parseRawAmountToFloat(raw?: string): number | null {
-    if (!raw) return null;
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n <= 0) return null;
-    return n / 1e18;
   }
 
   /** Single scheduler tick: fetch price and advance FSM once. */

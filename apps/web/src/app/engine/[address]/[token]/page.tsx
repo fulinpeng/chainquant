@@ -9,6 +9,7 @@ type EngineEvent = {
   id: string;
   type:
     | "SIGNAL"
+    | "EXECUTION"
     | "ENTRY"
     | "EXIT"
     | "INVALID_SIGNAL"
@@ -75,6 +76,12 @@ function fmtNum(n: number | null | undefined) {
 function fmtTradeNum(n: number | null | undefined) {
   if (typeof n !== "number" || !Number.isFinite(n)) return "--";
   return n.toFixed(6);
+}
+
+function extractTxHash(message?: string): string | null {
+  if (!message) return null;
+  const m = message.match(/\b0x[a-fA-F0-9]{64}\b/);
+  return m ? m[0] : null;
 }
 
 export default function EngineDetailPage() {
@@ -282,13 +289,14 @@ export default function EngineDetailPage() {
                 <th className="px-3 py-2 font-medium">时间</th>
                 <th className="px-3 py-2 font-medium">类型</th>
                 <th className="px-3 py-2 font-medium">价格</th>
+                <th className="px-3 py-2 font-medium">txHash</th>
                 <th className="px-3 py-2 font-medium">说明</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-oo-border text-oo-text-secondary">
               {(data?.events ?? []).length === 0 ? (
                 <tr>
-                  <td className="px-3 py-4 text-oo-text-muted" colSpan={4}>
+                  <td className="px-3 py-4 text-oo-text-muted" colSpan={5}>
                     暂无 events
                   </td>
                 </tr>
@@ -303,6 +311,8 @@ export default function EngineDetailPage() {
                         className={
                           ev.type === "ERROR"
                             ? "text-oo-error"
+                            : ev.type === "EXECUTION"
+                              ? "text-cyan-400"
                             : ev.type === "EXIT"
                               ? "text-oo-success"
                               : ev.type === "INVALID_SIGNAL" ||
@@ -316,6 +326,9 @@ export default function EngineDetailPage() {
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-oo-text">
                       {fmtNum(ev.price)}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
+                      {extractTxHash(ev.message) ?? "--"}
                     </td>
                     <td className="max-w-md truncate px-3 py-2 text-xs text-oo-text-muted">
                       {ev.message ?? "—"}

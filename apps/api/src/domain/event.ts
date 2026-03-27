@@ -1,5 +1,6 @@
 export type EventType =
   | "SIGNAL"
+  | "EXECUTION"
   | "ENTRY"
   | "EXIT"
   | "INVALID_SIGNAL"

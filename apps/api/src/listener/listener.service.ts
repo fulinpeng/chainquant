@@ -89,24 +89,32 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      const tx = await this.withTimeout(
-        provider.getTransaction(txHash),
-        12000,
-        "getTransaction timeout",
+      const tx = await this.withRetryOn429(
+        () =>
+          this.withTimeout(
+            provider.getTransaction(txHash),
+            12000,
+            "getTransaction timeout",
+          ),
+        3,
       );
       if (!tx) {
         throw new BadRequestException(`tx not found: ${txHash}`);
       }
 
-      const result = await this.withTimeout(
-        this.processWatchedTx(chainKey, provider, txHash, {
-          hash: tx.hash,
-          from: tx.from,
-          to: tx.to,
-          data: tx.data,
-        }),
-        18000,
-        "processWatchedTx timeout",
+      const result = await this.withRetryOn429(
+        () =>
+          this.withTimeout(
+            this.processWatchedTx(chainKey, provider, txHash, {
+              hash: tx.hash,
+              from: tx.from,
+              to: tx.to,
+              data: tx.data,
+            }),
+            18000,
+            "processWatchedTx timeout",
+          ),
+        2,
       );
 
       return {
@@ -297,6 +305,28 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
         setTimeout(() => reject(new Error(message)), timeoutMs);
       }),
     ]);
+  }
+
+  private async withRetryOn429<T>(
+    fn: () => Promise<T>,
+    attempts: number,
+  ): Promise<T> {
+    let lastErr: unknown;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!msg.includes('"code": 429') && !msg.toLowerCase().includes("throughput")) {
+          throw err;
+        }
+        if (i >= attempts - 1) break;
+        const waitMs = 600 * (2 ** i);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
 }
 

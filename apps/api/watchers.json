@@ -10,7 +10,7 @@
       "takeProfitPct": 0.0002,
       "delayEntry": true,
       "maxPositions": 1,
-      "mode": "paper",
+      "mode": "live",
       "maxTradeAmount": 0.000001,
       "slippage": 0.005
     },
