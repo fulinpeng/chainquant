@@ -105,6 +105,7 @@ export class ExecutionService {
     }
 
     const provider = new JsonRpcProvider(rpcUrl);
+    await this.ensureRpcAvailable(provider);
     const wallet = new Wallet(privateKey, provider);
     const routerAddress = CHAINS.arb.v3Routers[0];
     if (!routerAddress) {
@@ -124,17 +125,10 @@ export class ExecutionService {
     const tokenOutContract = new Contract(input.tokenOut, erc20Abi, wallet);
     const wrappedNative = CHAINS.arb.wrappedNative.address.toLowerCase();
     const isNativeInput = input.tokenIn.toLowerCase() === wrappedNative;
-    const tokenInDecimals = await this.withRetryOn429(
-      () =>
-        isNativeInput
-          ? Promise.resolve(18)
-          : this.withTimeout(tokenInContract.decimals(), 10000, "decimals_timeout"),
-      3,
-    );
-    const tokenOutDecimals = await this.withRetryOn429(
-      () => this.withTimeout(tokenOutContract.decimals(), 10000, "decimals_timeout"),
-      3,
-    );
+    const tokenInDecimals = isNativeInput
+      ? 18
+      : await this.readTokenDecimalsSafe(input.tokenIn, tokenInContract);
+    const tokenOutDecimals = await this.readTokenDecimalsSafe(input.tokenOut, tokenOutContract);
     const maxTradeAmountRaw = parseUnits(String(input.maxTradeAmount), tokenInDecimals);
     const parsedRawAmount = this.parseRawAmount(input.amountInRaw);
     const amountInWei = parsedRawAmount
@@ -260,6 +254,7 @@ export class ExecutionService {
 
   private normalizeExecutionError(msg: string): string {
     if (!msg) return "unknown_error";
+    if (this.isRpcUnavailableMessage(msg)) return `rpc_unavailable (${msg})`;
     if (msg.startsWith("quote_failed:")) return `quote_failed (${msg.slice("quote_failed:".length)})`;
     if (msg.startsWith("approve_failed:")) return `approve_failed (${msg.slice("approve_failed:".length)})`;
     if (msg.startsWith("send_tx_failed:")) return `send_tx_failed (${msg.slice("send_tx_failed:".length)})`;
@@ -284,7 +279,7 @@ export class ExecutionService {
       } catch (err) {
         lastErr = err;
         const msg = err instanceof Error ? err.message : String(err);
-        if (!msg.includes('"code": 429') && !msg.toLowerCase().includes("throughput")) {
+        if (!this.isRpcRetryableMessage(msg)) {
           throw err;
         }
         if (i >= attempts - 1) break;
@@ -293,6 +288,79 @@ export class ExecutionService {
       }
     }
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  }
+
+  private async ensureRpcAvailable(provider: JsonRpcProvider): Promise<void> {
+    try {
+      await this.withRetryOn429(
+        () => this.withTimeout(provider.getNetwork(), 8000, "rpc_network_timeout"),
+        3,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`rpc_unavailable:${msg}`);
+    }
+  }
+
+  private async readTokenDecimalsSafe(
+    tokenAddress: string,
+    tokenContract: Contract,
+  ): Promise<number> {
+    try {
+      return await this.withRetryOn429(
+        () => this.withTimeout(tokenContract.decimals(), 10000, "decimals_timeout"),
+        3,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const fallback = this.getKnownTokenDecimals(tokenAddress);
+      if (fallback !== null) {
+        this.logger.warn(
+          `decimals() failed for ${tokenAddress}, fallback to ${fallback}: ${
+            msg
+          }`,
+        );
+        return fallback;
+      }
+      if (this.isRpcUnavailableMessage(msg)) {
+        throw new Error(`rpc_unavailable:${msg}`);
+      }
+      throw err;
+    }
+  }
+
+  private getKnownTokenDecimals(tokenAddress: string): number | null {
+    const t = (tokenAddress ?? "").toLowerCase();
+    if (!t) return null;
+    if (t === CHAINS.arb.wrappedNative.address.toLowerCase()) return 18;
+    const stable = CHAINS.arb.stableTokens.find((x) => x.address.toLowerCase() === t);
+    if (!stable) return null;
+    if (stable.symbol.toUpperCase() === "USDC") return 6;
+    if (stable.symbol.toUpperCase() === "USDT") return 6;
+    return null;
+  }
+
+  private isRpcUnavailableMessage(msg: string): boolean {
+    const s = (msg ?? "").toLowerCase();
+    return (
+      s.includes('"code": 429') ||
+      s.includes("throughput") ||
+      s.includes("failed to detect network") ||
+      s.includes("rpc_network_timeout") ||
+      s.includes("network is not started") ||
+      s.includes("network changed") ||
+      s.includes("missing revert data")
+    );
+  }
+
+  private isRpcRetryableMessage(msg: string): boolean {
+    const s = (msg ?? "").toLowerCase();
+    return (
+      s.includes('"code": 429') ||
+      s.includes("throughput") ||
+      s.includes("failed to detect network") ||
+      s.includes("rpc_network_timeout")
+    );
   }
 }
 

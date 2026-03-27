@@ -7,6 +7,7 @@ import {
 import { MarketService } from "../market/market.service";
 import { ExecutionService } from "../execution/execution.service";
 import { DbSidecarService } from "../persistence/db-sidecar.service";
+import { watcherRepo } from "@chainquant/db";
 import { TradingEngine } from "./trading-engine";
 import type { CopierSignalPayload, EngineRuntimeConfig, OnSignalResult } from "./types";
 import { DEFAULT_ENGINE_RUNTIME_CONFIG } from "./types";
@@ -215,11 +216,11 @@ export class EngineManager implements OnModuleDestroy {
    * - Auto start when not running
    * - Trigger one manual signal (BUY) to drive FSM into WAITING_ENTRY
    */
-  handleSignalTest(input: {
+  async handleSignalTest(input: {
     address: string;
     token: string;
     price: number;
-  }): OnSignalResult {
+  }): Promise<OnSignalResult> {
     const address = (input.address ?? "").trim();
     const token = (input.token ?? "").trim();
     const price = Number(input.price);
@@ -230,11 +231,24 @@ export class EngineManager implements OnModuleDestroy {
       throw new BadRequestException("price must be a positive number");
     }
 
+    const watcher = await watcherRepo.findByAddressAndChain(address, "arb");
+    const watcherConfig =
+      watcher?.config && typeof watcher.config === "object"
+        ? (watcher.config as Partial<EngineRuntimeConfig>)
+        : null;
+    const config: EngineRuntimeConfig = watcherConfig
+      ? {
+          ...DEFAULT_ENGINE_RUNTIME_CONFIG,
+          ...watcherConfig,
+          mode: watcherConfig.mode === "live" ? "live" : "paper",
+        }
+      : DEFAULT_ENGINE_RUNTIME_CONFIG;
+
     return this.handleSignal(address, {
       type: "BUY",
       token,
       price,
-      config: DEFAULT_ENGINE_RUNTIME_CONFIG,
+      config,
     });
   }
 

@@ -41,6 +41,9 @@ export class TradingEngine {
   private currentPrice: number | null = null;
   private lastUpdateTime = 0;
   private lastExitTick: number | null = null;
+  private executionPending = false;
+  private executionReady = false;
+  private executionFailReason: string | null = null;
 
   constructor({
     marketService,
@@ -102,6 +105,9 @@ export class TradingEngine {
     this.lastUpdateTime = Date.now();
     this.lastExitTick = null;
     this.pendingSignalTick = null;
+    this.executionPending = false;
+    this.executionReady = false;
+    this.executionFailReason = null;
     this.stateStore.resetTradingState();
 
     this.running = true;
@@ -166,6 +172,9 @@ export class TradingEngine {
       createdAt: Date.now(),
     };
     this.triggerExecution(signal);
+    this.executionPending = true;
+    this.executionReady = false;
+    this.executionFailReason = null;
     this.stateStore.setSignal(domainSignal);
     this.state = "WAITING_ENTRY";
     this.pendingSignalTick = this.tickCount;
@@ -201,20 +210,35 @@ export class TradingEngine {
                 slippage: result.debug.slippage,
               }
             : { mode: result.mode };
+        const canEnterPosition =
+          result.ok && (result.mode === "paper" || (result.mode === "live" && Boolean(result.txHash)));
+        const liveWithoutTxHash = result.ok && result.mode === "live" && !result.txHash;
         void this.dbHooks?.onExecutionEvent?.({
-          ok: result.ok,
+          ok: canEnterPosition,
           mode: result.mode,
-          reason: result.ok ? undefined : result.reason,
-          txHash: result.ok && result.mode === "live" ? result.txHash : undefined,
+          reason: canEnterPosition
+            ? undefined
+            : liveWithoutTxHash
+              ? "live_tx_missing"
+              : result.reason,
+          txHash: result.mode === "live" && result.txHash ? result.txHash : undefined,
           data: execData,
         });
-        if (!result.ok) {
+        if (!canEnterPosition) {
+          this.executionPending = false;
+          this.executionReady = false;
+          this.executionFailReason = liveWithoutTxHash ? "live_tx_missing" : result.reason;
           this.stateStore.addEvent({
             type: "ERROR",
-            message: `Execution failed: ${result.reason}`,
+            message: liveWithoutTxHash
+              ? "Execution failed: live_tx_missing"
+              : `Execution failed: ${result.reason}`,
           });
           return;
         }
+        this.executionPending = false;
+        this.executionReady = true;
+        this.executionFailReason = null;
         if (result.mode === "live" && result.txHash) {
           const quoteInfo = result.debug
             ? `amountIn=${result.debug.amountIn} quoteOut=${result.debug.quoteAmountOut} minOut=${result.debug.minOut} slippage=${result.debug.slippage}`
@@ -227,6 +251,9 @@ export class TradingEngine {
       })
       .catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
+        this.executionPending = false;
+        this.executionReady = false;
+        this.executionFailReason = msg;
         void this.dbHooks?.onExecutionEvent?.({
           ok: false,
           mode: "live",
@@ -277,6 +304,19 @@ export class TradingEngine {
             break;
           }
           if (this.mode !== "MANUAL") break;
+          if (this.executionPending) {
+            break;
+          }
+          if (this.executionFailReason) {
+            this.stateStore.setSignal(null);
+            this.pendingSignalTick = null;
+            this.executionReady = false;
+            this.state = "IDLE";
+            break;
+          }
+          if (!this.executionReady) {
+            break;
+          }
           if (
             this.config.delayEntry &&
             this.pendingSignalTick !== null &&
@@ -353,6 +393,9 @@ export class TradingEngine {
           }
           this.stateStore.setSignal(null);
           this.pendingSignalTick = null;
+          this.executionPending = false;
+          this.executionReady = false;
+          this.executionFailReason = null;
           this.state = "IN_POSITION";
           break;
         }
