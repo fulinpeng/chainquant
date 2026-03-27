@@ -1,0 +1,53 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+/// 地址监听配置（与 API Watcher 对齐，便于后续迁移）
+model Watcher {
+  id        String   @id
+  address   String
+  chain     String
+  status    String
+  config    String   // JSON 字符串，与现有 EngineRuntimeConfig 序列化一致
+  createdAt DateTime
+
+  @@index([address, chain])
+}
+
+/// 成交记录（引擎维度）
+model Trade {
+  id         String   @id
+  address    String
+  token      String
+  side       String
+  entryTime  Int
+  entryPrice Float
+  size       Float
+  exitTime   Int?
+  exitPrice  Float?
+  stopLoss   Float
+  takeProfit Float
+  pnl        Float?
+  status     String
+
+  @@index([address, token])
+}
+
+/// 引擎事件日志
+model EngineEvent {
+  id        String   @id
+  address   String?
+  token     String?
+  type      String
+  timestamp DateTime
+  price     Float?
+  message   String?
+
+  @@index([address, token])
+  @@index([timestamp])
+}
