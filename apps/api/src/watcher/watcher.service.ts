@@ -4,6 +4,7 @@ import {
   Logger,
   OnModuleInit,
 } from "@nestjs/common";
+import { DbSidecarService } from "../persistence/db-sidecar.service";
 import { ListenerService } from "../listener/listener.service";
 import type { ChainKey } from "../config/chains";
 import * as fs from "node:fs";
@@ -27,7 +28,10 @@ export class WatcherService implements OnModuleInit {
   private readonly storagePath = path.join(process.cwd(), "watchers.json");
   private watcherList: Watcher[] = [];
 
-  constructor(private readonly listenerService: ListenerService) {}
+  constructor(
+    private readonly listenerService: ListenerService,
+    private readonly dbSidecar: DbSidecarService,
+  ) {}
 
   onModuleInit() {
     this.loadFromDisk();
@@ -57,6 +61,12 @@ export class WatcherService implements OnModuleInit {
     };
     this.watcherList.push(watcher);
     this.saveToDisk();
+    void this.dbSidecar.recordWatcherCreated({
+      id: watcher.id,
+      address: watcher.address,
+      chain: watcher.chain,
+      status: watcher.status,
+    });
     return watcher;
   }
 

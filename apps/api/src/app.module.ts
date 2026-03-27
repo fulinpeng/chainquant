@@ -7,9 +7,11 @@ import { TradingModule } from "./trading/trading.module";
 import { CopierModule } from "./copier/copier.module";
 import { ListenerModule } from "./listener/listener.module";
 import { WatcherModule } from "./watcher/watcher.module";
+import { PersistenceModule } from "./persistence/persistence.module";
 
 @Module({
   imports: [
+    PersistenceModule,
     HealthModule,
     AuthModule,
     MarketModule,

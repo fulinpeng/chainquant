@@ -10,6 +10,7 @@ import type { Trade } from "../domain/trade";
 import { StateStore } from "../state/state-store.service";
 import type {
   CopierSignalPayload,
+  EngineDbHooks,
   EngineRuntimeConfig,
   EngineResultDto,
   EngineState,
@@ -47,22 +48,26 @@ export class TradingEngine {
     address,
     token,
     config,
+    dbHooks,
   }: {
     marketService: MarketService;
     executionService: ExecutionService;
     address: string;
     token: string;
     config: EngineRuntimeConfig;
+    dbHooks?: EngineDbHooks;
   }) {
     this.marketService = marketService;
     this.executionService = executionService;
     this.address = address;
     this.token = token;
     this.config = config;
+    this.dbHooks = dbHooks;
     this.logger = new Logger(`TradingEngine:${address.slice(0, 8)}_${token.slice(0, 8)}`);
   }
   private readonly marketService: MarketService;
   private readonly executionService: ExecutionService;
+  private readonly dbHooks?: EngineDbHooks;
   public readonly address: string;
   public readonly token: string;
   private config: EngineRuntimeConfig;
@@ -186,6 +191,12 @@ export class TradingEngine {
         slippage: this.config.slippage,
       })
       .then((result) => {
+        void this.dbHooks?.onExecutionEvent?.({
+          ok: result.ok,
+          mode: result.mode,
+          reason: result.ok ? undefined : result.reason,
+          txHash: result.ok && result.mode === "live" ? result.txHash : undefined,
+        });
         if (!result.ok) {
           this.stateStore.addEvent({
             type: "ERROR",
@@ -205,6 +216,11 @@ export class TradingEngine {
       })
       .catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
+        void this.dbHooks?.onExecutionEvent?.({
+          ok: false,
+          mode: "live",
+          reason: msg,
+        });
         this.stateStore.addEvent({
           type: "ERROR",
           message: `Execution crashed: ${msg}`,
@@ -299,8 +315,9 @@ export class TradingEngine {
             message: `${sig.type} @ market (${opened?.side})`,
           });
           if (opened) {
+            const tradeId = createEntityId();
             this.stateStore.addTrade({
-              id: createEntityId(),
+              id: tradeId,
               token: opened.token,
               side: opened.side,
               entryTime: opened.entryTime,
@@ -312,6 +329,14 @@ export class TradingEngine {
               takeProfit: opened.takeProfit,
               pnl: null,
               status: "OPEN",
+            });
+            void this.dbHooks?.onTradeOpen?.({
+              tradeId,
+              address: this.address,
+              token: this.token,
+              side: opened.side,
+              size: opened.size,
+              entryPrice: opened.entryPrice,
             });
           }
           this.stateStore.setSignal(null);
@@ -442,6 +467,11 @@ export class TradingEngine {
         exitPrice,
         pnl,
         status: "CLOSED",
+      });
+      void this.dbHooks?.onTradeClose?.({
+        tradeId: openTrade.id,
+        exitPrice,
+        pnl,
       });
     } else {
       // Fallback for robustness if OPEN trade record is missing.

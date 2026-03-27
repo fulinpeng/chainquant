@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { MarketService } from "../market/market.service";
 import { ExecutionService } from "../execution/execution.service";
+import { DbSidecarService } from "../persistence/db-sidecar.service";
 import { TradingEngine } from "./trading-engine";
 import type { CopierSignalPayload, EngineRuntimeConfig, OnSignalResult } from "./types";
 import { DEFAULT_ENGINE_RUNTIME_CONFIG } from "./types";
@@ -23,6 +24,7 @@ export class EngineManager implements OnModuleDestroy {
   constructor(
     private readonly marketService: MarketService,
     private readonly executionService: ExecutionService,
+    private readonly dbSidecar: DbSidecarService,
   ) {}
 
   onModuleDestroy() {
@@ -52,6 +54,20 @@ export class EngineManager implements OnModuleDestroy {
         address: a,
         token: t,
         config,
+        dbHooks: {
+          onTradeOpen: (p) =>
+            void this.dbSidecar.recordTradeOpen({
+              ...p,
+              chain: "arb",
+            }),
+          onTradeClose: (p) => void this.dbSidecar.recordTradeClose(p),
+          onExecutionEvent: (ev) =>
+            void this.dbSidecar.recordExecutionEvent({
+              ...ev,
+              address: a,
+              chain: "arb",
+            }),
+        },
       });
       this.engines.set(key, engine);
       this.logger.log(`Created engine ${key}`);

@@ -10,6 +10,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@chainquant/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@nestjs/common':
         specifier: ^11.1.17
         version: 11.1.17(reflect-metadata@0.2.2)(rxjs@7.8.2)

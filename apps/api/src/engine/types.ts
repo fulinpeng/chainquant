@@ -35,6 +35,29 @@ export type CopierSignalPayload = {
   chain?: string;
 };
 
+/** 旁路数据库回调；由 EngineManager 注入，失败不影响引擎。 */
+export type EngineDbHooks = {
+  onTradeOpen?: (input: {
+    tradeId: string;
+    address: string;
+    token: string;
+    side: "LONG" | "SHORT";
+    size: number;
+    entryPrice: number;
+  }) => void | Promise<void>;
+  onTradeClose?: (input: {
+    tradeId: string;
+    exitPrice: number;
+    pnl: number;
+  }) => void | Promise<void>;
+  onExecutionEvent?: (input: {
+    ok: boolean;
+    mode: "paper" | "live";
+    reason?: string;
+    txHash?: string;
+  }) => void | Promise<void>;
+};
+
 export type EngineState = "IDLE" | "WAITING_ENTRY" | "IN_POSITION";
 
 export type EngineStatusDto = {
