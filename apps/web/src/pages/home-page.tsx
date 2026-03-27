@@ -16,6 +16,9 @@ type WatcherItem = {
     takeProfitPct: number;
     delayEntry: boolean;
     maxPositions: number;
+    mode: "paper" | "live";
+    maxTradeAmount: number;
+    slippage: number;
   };
   createdAt: number;
 };
@@ -52,6 +55,9 @@ export default function Home() {
     takeProfitPct: "",
     delayEntry: false,
     maxPositions: "",
+    mode: "paper" as "paper" | "live",
+    maxTradeAmount: "",
+    slippage: "",
   });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -184,6 +190,9 @@ export default function Home() {
       takeProfitPct: String(w.config.takeProfitPct),
       delayEntry: Boolean(w.config.delayEntry),
       maxPositions: String(w.config.maxPositions),
+      mode: w.config.mode,
+      maxTradeAmount: String(w.config.maxTradeAmount),
+      slippage: String(w.config.slippage),
     });
   }
 
@@ -195,6 +204,9 @@ export default function Home() {
       takeProfitPct: Number(editConfig.takeProfitPct),
       delayEntry: Boolean(editConfig.delayEntry),
       maxPositions: Number(editConfig.maxPositions),
+      mode: editConfig.mode,
+      maxTradeAmount: Number(editConfig.maxTradeAmount),
+      slippage: Number(editConfig.slippage),
     };
     setError(null);
     try {
@@ -445,6 +457,42 @@ export default function Home() {
                   value={editConfig.maxPositions}
                   onChange={(e) =>
                     setEditConfig((s) => ({ ...s, maxPositions: e.target.value }))
+                  }
+                  className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                />
+              </label>
+              <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
+                <span>mode</span>
+                <select
+                  value={editConfig.mode}
+                  onChange={(e) =>
+                    setEditConfig((s) => ({
+                      ...s,
+                      mode: e.target.value as "paper" | "live",
+                    }))
+                  }
+                  className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                >
+                  <option value="paper">paper</option>
+                  <option value="live">live</option>
+                </select>
+              </label>
+              <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
+                <span>maxTradeAmount</span>
+                <input
+                  value={editConfig.maxTradeAmount}
+                  onChange={(e) =>
+                    setEditConfig((s) => ({ ...s, maxTradeAmount: e.target.value }))
+                  }
+                  className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                />
+              </label>
+              <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
+                <span>slippage</span>
+                <input
+                  value={editConfig.slippage}
+                  onChange={(e) =>
+                    setEditConfig((s) => ({ ...s, slippage: e.target.value }))
                   }
                   className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
                 />

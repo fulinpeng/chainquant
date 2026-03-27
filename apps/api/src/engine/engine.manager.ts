@@ -5,6 +5,7 @@ import {
   OnModuleDestroy,
 } from "@nestjs/common";
 import { MarketService } from "../market/market.service";
+import { ExecutionService } from "../execution/execution.service";
 import { TradingEngine } from "./trading-engine";
 import type { CopierSignalPayload, EngineRuntimeConfig, OnSignalResult } from "./types";
 import { DEFAULT_ENGINE_RUNTIME_CONFIG } from "./types";
@@ -19,7 +20,10 @@ export class EngineManager implements OnModuleDestroy {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private tickInFlight = false;
 
-  constructor(private readonly marketService: MarketService) {}
+  constructor(
+    private readonly marketService: MarketService,
+    private readonly executionService: ExecutionService,
+  ) {}
 
   onModuleDestroy() {
     this.clearTickTimer();
@@ -44,6 +48,7 @@ export class EngineManager implements OnModuleDestroy {
     if (!engine) {
       engine = new TradingEngine({
         marketService: this.marketService,
+        executionService: this.executionService,
         address: a,
         token: t,
         config,
@@ -158,7 +163,12 @@ export class EngineManager implements OnModuleDestroy {
    */
   handleSignal(
     address: string,
-    signal: CopierSignalPayload & { token?: string; config?: EngineRuntimeConfig },
+    signal: CopierSignalPayload & {
+      token?: string;
+      config?: EngineRuntimeConfig;
+      amount?: string;
+      chain?: string;
+    },
   ): OnSignalResult {
     const a = address.trim();
     const token = (signal.token ?? a).trim();
@@ -177,6 +187,8 @@ export class EngineManager implements OnModuleDestroy {
     return engine.onSignal({
       type: signal.type,
       price: signal.price,
+      amount: signal.amount,
+      chain: signal.chain,
     });
   }
 

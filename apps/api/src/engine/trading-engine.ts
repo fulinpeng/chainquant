@@ -1,6 +1,8 @@
 import { BadRequestException, Logger } from "@nestjs/common";
+import { CHAINS } from "../config/chains";
 import type { MarketCandle } from "../market/market.service";
 import { MarketService } from "../market/market.service";
+import { ExecutionService } from "../execution/execution.service";
 import { createEntityId } from "../domain/id";
 import type { Position } from "../domain/position";
 import type { Signal as DomainSignal } from "../domain/signal";
@@ -41,22 +43,26 @@ export class TradingEngine {
 
   constructor({
     marketService,
+    executionService,
     address,
     token,
     config,
   }: {
     marketService: MarketService;
+    executionService: ExecutionService;
     address: string;
     token: string;
     config: EngineRuntimeConfig;
   }) {
     this.marketService = marketService;
+    this.executionService = executionService;
     this.address = address;
     this.token = token;
     this.config = config;
     this.logger = new Logger(`TradingEngine:${address.slice(0, 8)}_${token.slice(0, 8)}`);
   }
   private readonly marketService: MarketService;
+  private readonly executionService: ExecutionService;
   public readonly address: string;
   public readonly token: string;
   private config: EngineRuntimeConfig;
@@ -154,6 +160,7 @@ export class TradingEngine {
       price: signal.price ?? this.currentPrice ?? 0,
       createdAt: Date.now(),
     };
+    this.triggerExecution(signal);
     this.stateStore.setSignal(domainSignal);
     this.state = "WAITING_ENTRY";
     this.pendingSignalTick = this.tickCount;
@@ -163,6 +170,51 @@ export class TradingEngine {
     });
 
     return { ok: true };
+  }
+
+  private triggerExecution(signal: CopierSignalPayload): void {
+    const wrapped = CHAINS.arb.wrappedNative.address;
+    const tokenIn = signal.type === "BUY" ? wrapped : this.token;
+    const tokenOut = signal.type === "BUY" ? this.token : wrapped;
+    const requestedAmount = this.parseRawAmountToFloat(signal.amount);
+    void this.executionService
+      .execute({
+        mode: this.config.mode,
+        tokenIn,
+        tokenOut,
+        amountIn: requestedAmount ?? this.config.maxTradeAmount,
+        maxTradeAmount: this.config.maxTradeAmount,
+        slippage: this.config.slippage,
+      })
+      .then((result) => {
+        if (!result.ok) {
+          this.stateStore.addEvent({
+            type: "ERROR",
+            message: `Execution failed: ${result.reason}`,
+          });
+          return;
+        }
+        if (result.mode === "live" && result.txHash) {
+          this.stateStore.addEvent({
+            type: "SIGNAL",
+            message: `Live tx sent: ${result.txHash}`,
+          });
+        }
+      })
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.stateStore.addEvent({
+          type: "ERROR",
+          message: `Execution crashed: ${msg}`,
+        });
+      });
+  }
+
+  private parseRawAmountToFloat(raw?: string): number | null {
+    if (!raw) return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return n / 1e18;
   }
 
   /** Single scheduler tick: fetch price and advance FSM once. */
@@ -425,6 +477,12 @@ export class TradingEngine {
     if (!Number.isFinite(stopLossDistance) || stopLossDistance <= 0) {
       return 0;
     }
-    return riskAmount / stopLossDistance;
+    const riskBasedSize = riskAmount / stopLossDistance;
+    const cap = Number(this.config.maxTradeAmount);
+    if (!Number.isFinite(cap) || cap < 0) {
+      return riskBasedSize;
+    }
+    // No minimum trade-size floor: only cap by watcher config.
+    return Math.min(riskBasedSize, cap);
   }
 }

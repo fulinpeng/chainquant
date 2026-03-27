@@ -260,6 +260,8 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
         type: parsed.type,
         token: parsed.token,
         price,
+        amount: parsed.amount,
+        chain: chainKey,
         config: watcher.config,
       });
       this.logger.log(`Signal from chain tx: ${from} ${parsed.type} ${parsed.token}`);

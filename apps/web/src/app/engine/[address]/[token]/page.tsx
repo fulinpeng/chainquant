@@ -72,6 +72,11 @@ function fmtNum(n: number | null | undefined) {
   return n.toFixed(4);
 }
 
+function fmtTradeNum(n: number | null | undefined) {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "--";
+  return n.toFixed(6);
+}
+
 export default function EngineDetailPage() {
   const routeParams = useParams<{ address?: string; token?: string }>();
   const address = decodeURIComponent(routeParams?.address ?? "");
@@ -241,13 +246,13 @@ export default function EngineDetailPage() {
                       {t.side}
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-oo-text">
-                      {t.entryPrice.toFixed(4)}
+                      {fmtTradeNum(t.entryPrice)}
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-oo-text">
-                      {fmtNum(t.size)}
+                      {fmtTradeNum(t.size)}
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-oo-text">
-                      {t.exitPrice == null ? "--" : t.exitPrice.toFixed(4)}
+                      {fmtTradeNum(t.exitPrice)}
                     </td>
                     <td
                       className={`px-3 py-2 font-mono text-xs ${
@@ -258,7 +263,7 @@ export default function EngineDetailPage() {
                             : "text-oo-error"
                       }`}
                     >
-                      {t.pnl == null ? "--" : t.pnl.toFixed(4)}
+                      {fmtTradeNum(t.pnl)}
                     </td>
                   </tr>
                 ))

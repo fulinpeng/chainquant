@@ -176,12 +176,35 @@ export class WatcherService implements OnModuleInit {
 
   private normalizeConfig(input: Partial<EngineRuntimeConfig>): EngineRuntimeConfig {
     const merged = { ...DEFAULT_ENGINE_RUNTIME_CONFIG, ...input };
+    const riskPerTrade = this.numOrDefault(
+      merged.riskPerTrade,
+      DEFAULT_ENGINE_RUNTIME_CONFIG.riskPerTrade,
+    );
+    const stopLossPct = this.numOrDefault(
+      merged.stopLossPct,
+      DEFAULT_ENGINE_RUNTIME_CONFIG.stopLossPct,
+    );
+    const takeProfitPct = this.numOrDefault(
+      merged.takeProfitPct,
+      DEFAULT_ENGINE_RUNTIME_CONFIG.takeProfitPct,
+    );
+    const maxTradeAmount = this.numOrDefault(
+      merged.maxTradeAmount,
+      DEFAULT_ENGINE_RUNTIME_CONFIG.maxTradeAmount,
+    );
+    const slippage = this.numOrDefault(
+      merged.slippage,
+      DEFAULT_ENGINE_RUNTIME_CONFIG.slippage,
+    );
     return {
-      riskPerTrade: this.numOrDefault(merged.riskPerTrade, DEFAULT_ENGINE_RUNTIME_CONFIG.riskPerTrade),
-      stopLossPct: this.numOrDefault(merged.stopLossPct, DEFAULT_ENGINE_RUNTIME_CONFIG.stopLossPct),
-      takeProfitPct: this.numOrDefault(merged.takeProfitPct, DEFAULT_ENGINE_RUNTIME_CONFIG.takeProfitPct),
+      riskPerTrade: Math.min(1, Math.max(0, riskPerTrade)),
+      stopLossPct: Math.max(0, stopLossPct),
+      takeProfitPct: Math.max(0, takeProfitPct),
       delayEntry: Boolean(merged.delayEntry),
       maxPositions: Math.max(1, Math.floor(this.numOrDefault(merged.maxPositions, DEFAULT_ENGINE_RUNTIME_CONFIG.maxPositions))),
+      mode: merged.mode === "live" ? "live" : "paper",
+      maxTradeAmount: Math.max(0, maxTradeAmount),
+      slippage: Math.min(0.05, Math.max(0.0001, slippage)),
     };
   }
 

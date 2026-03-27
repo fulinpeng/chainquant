@@ -9,6 +9,9 @@ export type EngineRuntimeConfig = {
   takeProfitPct: number;
   delayEntry: boolean;
   maxPositions: number;
+  mode: "paper" | "live";
+  maxTradeAmount: number;
+  slippage: number;
 };
 
 export const DEFAULT_ENGINE_RUNTIME_CONFIG: EngineRuntimeConfig = {
@@ -17,12 +20,19 @@ export const DEFAULT_ENGINE_RUNTIME_CONFIG: EngineRuntimeConfig = {
   takeProfitPct: 0.0002, // 2/10000
   delayEntry: false,
   maxPositions: 1,
+  mode: "paper",
+  maxTradeAmount: 0.01,
+  slippage: 0.005,
 };
 
 export type CopierSignalPayload = {
   type: "BUY" | "SELL";
   /** Optional external observed price for test/manual entry. */
   price?: number;
+  /** Optional raw amount from chain parser (stringified integer). */
+  amount?: string;
+  /** Optional source chain key. */
+  chain?: string;
 };
 
 export type EngineState = "IDLE" | "WAITING_ENTRY" | "IN_POSITION";
