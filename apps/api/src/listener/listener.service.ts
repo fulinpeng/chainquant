@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   OnModuleDestroy,
@@ -44,6 +45,51 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
 
   removeAddress(address: string): { ok: true } {
     return this.engineManager.removeAddress(address);
+  }
+
+  async replayTx(input: { txHash: string; chain?: ChainKey }) {
+    const txHash = (input.txHash ?? "").trim().toLowerCase();
+    const chainKey = (input.chain ?? "arb") as ChainKey;
+    if (!txHash) {
+      throw new BadRequestException("txHash is required");
+    }
+
+    const provider = this.providers.get(chainKey);
+    if (!provider) {
+      throw new BadRequestException(`listener not started for chain=${chainKey}`);
+    }
+
+    try {
+      const tx = await provider.getTransaction(txHash);
+      if (!tx) {
+        throw new BadRequestException(`tx not found: ${txHash}`);
+      }
+
+      const result = await this.processWatchedTx(chainKey, provider, txHash, {
+        hash: tx.hash,
+        from: tx.from,
+        to: tx.to,
+        data: tx.data,
+      });
+
+      return {
+        ok: Boolean(result && result.hit),
+        chain: chainKey,
+        txHash,
+        ...result,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`[replay-tx] failed for ${txHash} on ${chainKey}: ${msg}`);
+      return {
+        ok: false,
+        chain: chainKey,
+        txHash,
+        hit: false as const,
+        reason: "rpc_error",
+        message: msg,
+      };
+    }
   }
 
   private start() {
@@ -96,62 +142,94 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
               data?: string | null;
             });
         if (!tx) continue;
-        const txHash = tx.hash;
-        const from = (tx.from ?? "").toLowerCase();
-        if (!from || !this.engineManager.isWatchedAddress(from)) continue;
-
-        const chainCfg = CHAINS[chainKey];
-        const toLower = (tx.to ?? "").toLowerCase();
-        const isV4UniversalRouter = chainCfg.v4UniversalRouters.includes(toLower);
-
-        const parsed = isV4UniversalRouter
-          ? await (async () => {
-              // Listener only fetches receipt for V4 routers to reduce RPC load.
-              const receipt = await provider.getTransactionReceipt(txHash);
-              return this.parserService.parseSwapTx(
-                { to: tx.to, data: tx.data },
-                chainKey,
-                { receipt: receipt ?? undefined, userAddress: from },
-              );
-            })()
-          : this.parserService.parseSwapTx({ to: tx.to, data: tx.data }, chainKey);
-
-        if (!parsed) {
-          this.logger.log(
-            `[${chainCfg.name}] watched tx parse skipped: ${txHash} to=${toLower}`,
-          );
-          continue;
-        }
-
-        let price: number;
-        try {
-          price = await this.marketService.getLatestPriceByToken(parsed.token);
-        } catch (err) {
-          this.logger.warn(
-            `Price fetch failed for token ${parsed.token}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-          continue;
-        }
-
-        try {
-          this.engineManager.handleSignal(from, {
-            type: parsed.type,
-            token: parsed.token,
-            price,
-          });
-          this.logger.log(
-            `Signal from chain tx: ${from} ${parsed.type} ${parsed.token}`,
-          );
-        } catch (err) {
-          this.logger.warn(
-            `handleSignal failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
+        await this.processWatchedTx(chainKey, provider, tx.hash, tx);
       }
     } catch (err) {
       this.logger.warn(
         `[${chainKey}] Block handling failed(${blockNumber}): ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
+  }
+
+  private async processWatchedTx(
+    chainKey: ChainKey,
+    provider: WebSocketProvider,
+    txHash: string,
+    tx: {
+      hash: string;
+      from?: string | null;
+      to?: string | null;
+      data?: string | null;
+    },
+  ): Promise<
+    | {
+        hit: false;
+        reason: string;
+      }
+    | {
+        hit: true;
+        from: string;
+        token: string;
+        side: "BUY" | "SELL";
+      }
+  > {
+    const from = (tx.from ?? "").toLowerCase();
+    if (!from || !this.engineManager.isWatchedAddress(from)) {
+      return { hit: false, reason: "address_not_watched" };
+    }
+
+    const chainCfg = CHAINS[chainKey];
+    const toLower = (tx.to ?? "").toLowerCase();
+    const isV4UniversalRouter = chainCfg.v4UniversalRouters.includes(toLower);
+
+    const parsed = isV4UniversalRouter
+      ? await (async () => {
+          const receipt = await provider.getTransactionReceipt(txHash);
+          return this.parserService.parseSwapTx(
+            { to: tx.to, data: tx.data },
+            chainKey,
+            { receipt: receipt ?? undefined, userAddress: from },
+          );
+        })()
+      : this.parserService.parseSwapTx({ to: tx.to, data: tx.data }, chainKey);
+
+    if (!parsed) {
+      this.logger.log(
+        `[${chainCfg.name}] watched tx parse skipped: ${txHash} to=${toLower}`,
+      );
+      return { hit: false, reason: "parse_skipped" };
+    }
+
+    let price: number;
+    try {
+      price = await this.marketService.getLatestPriceByToken(parsed.token);
+    } catch (err) {
+      this.logger.warn(
+        `Price fetch failed for token ${parsed.token}: ${err instanceof Error ? err.message : String(err)}; fallback to ETH spot`,
+      );
+      try {
+        price = await this.marketService.getLatestPrice();
+      } catch (fallbackErr) {
+        this.logger.warn(
+          `Fallback price fetch failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`,
+        );
+        return { hit: false, reason: "price_fetch_failed" };
+      }
+    }
+
+    try {
+      this.engineManager.handleSignal(from, {
+        type: parsed.type,
+        token: parsed.token,
+        price,
+      });
+      this.logger.log(`Signal from chain tx: ${from} ${parsed.type} ${parsed.token}`);
+      return { hit: true, from, token: parsed.token, side: parsed.type };
+    } catch (err) {
+      this.logger.warn(
+        `handleSignal failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return { hit: false, reason: "handle_signal_failed" };
     }
   }
 }

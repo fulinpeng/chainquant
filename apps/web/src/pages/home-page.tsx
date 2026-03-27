@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WalletHeader from "@/components/WalletHeader";
 
@@ -7,6 +8,11 @@ type WatcherItem = {
   address: string;
   status: "RUNNING" | "STOPPED";
   createdAt: number;
+};
+
+type EngineListItem = {
+  address: string;
+  token: string;
 };
 
 function maskAddress(address: string) {
@@ -26,6 +32,7 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [watcherList, setWatcherList] = useState<WatcherItem[]>([]);
+  const [engineList, setEngineList] = useState<EngineListItem[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => setMounted(true), []);
@@ -57,14 +64,29 @@ export default function Home() {
     }
   }, [apiBaseUrl, parseApiError]);
 
+  const fetchEngineList = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBaseUrl}/engine/list`);
+      const data = (await res.json()) as unknown;
+      if (!res.ok) return;
+      setEngineList(Array.isArray(data) ? (data as EngineListItem[]) : []);
+    } catch {
+      // ignore for watcher page
+    }
+  }, [apiBaseUrl]);
+
   useEffect(() => {
     void fetchWatcherList();
+    void fetchEngineList();
     if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(() => void fetchWatcherList(), 3000);
+    pollRef.current = setInterval(() => {
+      void fetchWatcherList();
+      void fetchEngineList();
+    }, 3000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [fetchWatcherList]);
+  }, [fetchWatcherList, fetchEngineList]);
 
   async function addWatcher() {
     const addr = inputAddress.trim();
@@ -114,6 +136,16 @@ export default function Home() {
       setError("复制地址失败");
     }
   }
+
+  const firstEngineByAddress = useMemo(() => {
+    const map = new Map<string, EngineListItem>();
+    for (const e of engineList) {
+      const key = (e.address ?? "").toLowerCase();
+      if (!key || map.has(key)) continue;
+      map.set(key, e);
+    }
+    return map;
+  }, [engineList]);
 
   if (!mounted) {
     return (
@@ -234,6 +266,18 @@ export default function Home() {
                         >
                           Delete
                         </button>
+                        {firstEngineByAddress.get(w.address.toLowerCase()) ? (
+                          <Link
+                            href={`/engine/${encodeURIComponent(w.address)}/${encodeURIComponent(firstEngineByAddress.get(w.address.toLowerCase())!.token)}`}
+                            className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
+                          >
+                            View
+                          </Link>
+                        ) : (
+                          <span className="rounded-md border border-oo-border px-3 py-1.5 text-oo-text-muted">
+                            View
+                          </span>
+                        )}
                       </div>
                     </td>
                   </tr>

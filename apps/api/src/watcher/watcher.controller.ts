@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post } from "@nestjs/common";
 import { WatcherService } from "./watcher.service";
+import type { ChainKey } from "../config/chains";
 
 @Controller("watcher")
 export class WatcherController {
@@ -32,6 +33,12 @@ export class WatcherController {
   @HttpCode(HttpStatus.OK)
   delete(@Body() body: { address: string }) {
     return this.watcherService.delete(body?.address ?? "");
+  }
+
+  @Post("replay-tx")
+  @HttpCode(HttpStatus.OK)
+  replayTx(@Body() body: { txHash: string; chain?: ChainKey }) {
+    return this.watcherService.replayTx(body?.txHash ?? "", body?.chain);
   }
 }
 

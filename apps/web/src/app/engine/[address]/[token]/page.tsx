@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WalletHeader from "@/components/WalletHeader";
 
@@ -71,16 +72,10 @@ function fmtNum(n: number | null | undefined) {
   return n.toFixed(4);
 }
 
-export default function EngineDetailPage({
-  params,
-}: {
-  params: Promise<{ address: string; token: string }>;
-}) {
-  // Next.js 的类型对 `params` 在该场景可能被声明为 Promise，
-  // 但运行时依然会提供对象；这里做兼容性断言。
-  const p = params as unknown as { address?: string; token?: string };
-  const address = decodeURIComponent(p.address ?? "");
-  const token = decodeURIComponent(p.token ?? "");
+export default function EngineDetailPage() {
+  const routeParams = useParams<{ address?: string; token?: string }>();
+  const address = decodeURIComponent(routeParams?.address ?? "");
+  const token = decodeURIComponent(routeParams?.token ?? "");
 
   const [data, setData] = useState<EngineDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
