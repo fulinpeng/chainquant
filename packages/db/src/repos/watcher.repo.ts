@@ -1,13 +1,7 @@
+import type { Watcher } from "@prisma/client";
 import { prisma } from "../client";
 
-export type WatcherRow = {
-  id: string;
-  address: string;
-  chain: string;
-  status: string;
-  config: string;
-  createdAt: Date;
-};
+export type WatcherRow = Watcher;
 
 export const watcherRepo = {
   async findAll(): Promise<WatcherRow[]> {
@@ -23,17 +17,41 @@ export const watcherRepo = {
     });
   },
 
-  async upsert(row: WatcherRow): Promise<WatcherRow> {
+  async findById(id: string): Promise<WatcherRow | null> {
+    return prisma.watcher.findUnique({ where: { id } });
+  },
+
+  async create(data: Pick<WatcherRow, "address" | "chain" | "status">): Promise<WatcherRow> {
+    return prisma.watcher.create({
+      data: {
+        address: data.address.toLowerCase(),
+        chain: data.chain,
+        status: data.status,
+      },
+    });
+  },
+
+  async upsertById(row: Pick<WatcherRow, "id" | "address" | "chain" | "status">): Promise<WatcherRow> {
     return prisma.watcher.upsert({
       where: { id: row.id },
-      create: row,
-      update: {
-        address: row.address,
+      create: {
+        id: row.id,
+        address: row.address.toLowerCase(),
         chain: row.chain,
         status: row.status,
-        config: row.config,
-        createdAt: row.createdAt,
       },
+      update: {
+        address: row.address.toLowerCase(),
+        chain: row.chain,
+        status: row.status,
+      },
+    });
+  },
+
+  async updateStatus(id: string, status: string): Promise<WatcherRow> {
+    return prisma.watcher.update({
+      where: { id },
+      data: { status },
     });
   },
 

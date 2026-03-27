@@ -1,52 +1,61 @@
+import type { Trade } from "@prisma/client";
 import { prisma } from "../client";
 
-export type TradeRow = {
-  id: string;
+export type TradeRow = Trade;
+
+export type CreateTradeInput = {
+  id?: string;
   address: string;
   token: string;
   side: string;
-  entryTime: number;
-  entryPrice: number;
   size: number;
-  exitTime: number | null;
-  exitPrice: number | null;
-  stopLoss: number;
-  takeProfit: number;
-  pnl: number | null;
+  entryPrice: number;
+  exitPrice?: number | null;
+  pnl?: number | null;
   status: string;
+  txHash?: string | null;
+  watcherId: string;
 };
 
 export const tradeRepo = {
-  async create(row: TradeRow) {
+  async create(data: CreateTradeInput) {
     return prisma.trade.create({
       data: {
-        id: row.id,
-        address: row.address,
-        token: row.token,
-        side: row.side,
-        entryTime: row.entryTime,
-        entryPrice: row.entryPrice,
-        size: row.size,
-        exitTime: row.exitTime,
-        exitPrice: row.exitPrice,
-        stopLoss: row.stopLoss,
-        takeProfit: row.takeProfit,
-        pnl: row.pnl,
-        status: row.status,
+        ...(data.id ? { id: data.id } : {}),
+        address: data.address.toLowerCase(),
+        token: data.token.toLowerCase(),
+        side: data.side,
+        size: data.size,
+        entryPrice: data.entryPrice,
+        exitPrice: data.exitPrice ?? null,
+        pnl: data.pnl ?? null,
+        status: data.status,
+        txHash: data.txHash ?? null,
+        watcher: { connect: { id: data.watcherId } },
       },
     });
   },
 
-  async findByEngine(address: string, token: string) {
+  async findByWatcher(watcherId: string) {
     return prisma.trade.findMany({
-      where: { address: address.toLowerCase(), token: token.toLowerCase() },
-      orderBy: { entryTime: "desc" },
+      where: { watcherId },
+      orderBy: { createdAt: "desc" },
+    });
+  },
+
+  async findByAddressAndToken(address: string, token: string) {
+    return prisma.trade.findMany({
+      where: {
+        address: address.toLowerCase(),
+        token: token.toLowerCase(),
+      },
+      orderBy: { createdAt: "desc" },
     });
   },
 
   async updateById(
     id: string,
-    patch: Partial<Pick<TradeRow, "exitTime" | "exitPrice" | "pnl" | "status">>,
+    patch: Partial<Pick<TradeRow, "exitPrice" | "pnl" | "status" | "txHash">>,
   ) {
     return prisma.trade.update({
       where: { id },

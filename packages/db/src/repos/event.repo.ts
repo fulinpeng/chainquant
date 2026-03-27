@@ -1,41 +1,42 @@
+import type { Event as EventRecord } from "@prisma/client";
 import { prisma } from "../client";
 
-export type EngineEventRow = {
-  id: string;
-  address?: string | null;
-  token?: string | null;
+/** 与 Prisma `Event` 模型一致；避免与 DOM Event 混淆时使用别名。 */
+export type EventRow = EventRecord;
+
+export type AppendEventInput = {
+  id?: string;
   type: string;
-  timestamp: Date;
-  price?: number | null;
-  message?: string | null;
+  message: string;
+  txHash?: string | null;
+  stage?: string | null;
+  watcherId?: string | null;
 };
 
 export const eventRepo = {
-  async append(row: EngineEventRow) {
-    return prisma.engineEvent.create({
+  async append(input: AppendEventInput) {
+    return prisma.event.create({
       data: {
-        id: row.id,
-        address: row.address ?? null,
-        token: row.token ?? null,
-        type: row.type,
-        timestamp: row.timestamp,
-        price: row.price ?? null,
-        message: row.message ?? null,
+        ...(input.id ? { id: input.id } : {}),
+        type: input.type,
+        message: input.message,
+        txHash: input.txHash ?? null,
+        stage: input.stage ?? null,
+        ...(input.watcherId != null && input.watcherId !== ""
+          ? { watcher: { connect: { id: input.watcherId } } }
+          : {}),
       },
     });
   },
 
-  async listRecent(address: string | null, token: string | null, limit: number) {
-    const take = Math.min(Math.max(1, limit), 500);
-    return prisma.engineEvent.findMany({
+  async listRecent(params: { watcherId?: string | null; limit: number }) {
+    const take = Math.min(Math.max(1, params.limit), 500);
+    return prisma.event.findMany({
       where:
-        address && token
-          ? {
-              address: address.toLowerCase(),
-              token: token.toLowerCase(),
-            }
+        params.watcherId != null && params.watcherId !== ""
+          ? { watcherId: params.watcherId }
           : {},
-      orderBy: { timestamp: "desc" },
+      orderBy: { createdAt: "desc" },
       take,
     });
   },

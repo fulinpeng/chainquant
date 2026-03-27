@@ -7,47 +7,61 @@ generator client {
   provider = "prisma-client-js"
 }
 
-/// 地址监听配置（与 API Watcher 对齐，便于后续迁移）
+/// 监听实例：与 API `Watcher.status`（RUNNING / STOPPED）对齐；运行时配置可后续用独立表或 Json 字段扩展。
 model Watcher {
-  id        String   @id
+  id        String   @id @default(cuid())
   address   String
   chain     String
-  status    String
-  config    String   // JSON 字符串，与现有 EngineRuntimeConfig 序列化一致
-  createdAt DateTime
+  status    String // RUNNING / STOPPED
+  createdAt DateTime @default(now())
+
+  trades Trade[]
+  events Event[]
 
   @@index([address, chain])
 }
 
-/// 成交记录（引擎维度）
+/// 成交：侧向用字符串存（如 BUY/SELL；引擎 LONG/SHORT 在写入层映射）；时间与风控字段可按需再加列迁移。
 model Trade {
-  id         String   @id
+  id         String   @id @default(cuid())
   address    String
   token      String
-  side       String
-  entryTime  Int
-  entryPrice Float
+  side       String // BUY / SELL
   size       Float
-  exitTime   Int?
-  exitPrice  Float?
-  stopLoss   Float
-  takeProfit Float
-  pnl        Float?
-  status     String
 
+  entryPrice Float
+  exitPrice  Float?
+
+  pnl        Float?
+
+  status     String // OPEN / CLOSED
+
+  txHash     String?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  watcherId String
+  watcher   Watcher @relation(fields: [watcherId], references: [id], onDelete: Cascade)
+
+  @@index([watcherId])
   @@index([address, token])
 }
 
-/// 引擎事件日志
-model EngineEvent {
-  id        String   @id
-  address   String?
-  token     String?
-  type      String
-  timestamp DateTime
-  price     Float?
-  message   String?
+/// 引擎 / 执行流水：类型与 stage 均用字符串，便于新增枚举值而不改 schema。
+model Event {
+  id      String @id @default(cuid())
+  type    String // SIGNAL / EXECUTION / ERROR
+  message String
 
-  @@index([address, token])
-  @@index([timestamp])
+  txHash String?
+  stage  String? // quote_failed / send_tx_failed / ...
+
+  createdAt DateTime @default(now())
+
+  watcherId String?
+  watcher   Watcher? @relation(fields: [watcherId], references: [id], onDelete: SetNull)
+
+  @@index([watcherId])
+  @@index([createdAt])
 }
