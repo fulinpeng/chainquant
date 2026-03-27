@@ -118,6 +118,11 @@ export class ParserService {
 
     let bestTokenOut: string | null = null;
     let bestValue: bigint = 0n;
+    let userSentToken: string | null = null;
+    let userSentValue: bigint = 0n;
+    let hasWethUnwrapToNative = false;
+    const wrappedNative = chainConfig.wrappedNative.address.toLowerCase();
+    const routers = chainConfig.v4UniversalRouters.map((x) => x.toLowerCase());
 
     for (const log of receipt.logs) {
       if (!log.topics || log.topics.length < 3) continue;
@@ -125,10 +130,6 @@ export class ParserService {
       if (!log.data) continue;
 
       // topics: [event sig, from, to]
-      const toTopic = log.topics[2];
-      const toAddr = `0x${toTopic.slice(26)}`.toLowerCase();
-      if (toAddr !== user) continue;
-
       let value: bigint;
       try {
         value = BigInt(log.data);
@@ -138,23 +139,57 @@ export class ParserService {
       if (value <= 0n) continue;
 
       const tokenAddr = log.address.toLowerCase();
-      if (bestTokenOut === null || value > bestValue) {
+      const fromAddr = this.topicToAddress(log.topics[1]);
+      const toAddr = this.topicToAddress(log.topics[2]);
+
+      // Option A: user receives ERC20 token directly.
+      if (toAddr === user && (bestTokenOut === null || value > bestValue)) {
         bestTokenOut = tokenAddr;
         bestValue = value;
       }
+
+      // Track user's major outgoing ERC20 token for unwrap fallback.
+      if (fromAddr === user && tokenAddr !== wrappedNative && value > userSentValue) {
+        userSentToken = tokenAddr;
+        userSentValue = value;
+      }
+
+      // Option B signal: WETH unwrap (router burns WETH to zero and sends native ETH internally).
+      if (
+        tokenAddr === wrappedNative &&
+        toAddr === "0x0000000000000000000000000000000000000000" &&
+        fromAddr !== null &&
+        routers.includes(fromAddr)
+      ) {
+        hasWethUnwrapToNative = true;
+      }
     }
 
-    if (!bestTokenOut) {
-      this.logger.log(`[${chainConfig.name}] 解析失败(未找到用户收到的 ERC20 转账)`);
-      return null;
+    if (bestTokenOut) {
+      const type = bestTokenOut === wrappedNative ? "SELL" : "BUY";
+      return {
+        token: bestTokenOut,
+        type,
+        amount: bestValue.toString(),
+      };
     }
 
-    const type = bestTokenOut === chainConfig.wrappedNative.address ? "SELL" : "BUY";
-    return {
-      token: bestTokenOut,
-      type,
-      amount: bestValue.toString(),
-    };
+    // Fallback for V4 USDC -> ETH style swap: no ERC20 to user, but unwrap exists.
+    if (hasWethUnwrapToNative && userSentToken && userSentValue > 0n) {
+      return {
+        token: userSentToken,
+        type: "SELL",
+        amount: userSentValue.toString(),
+      };
+    }
+
+    this.logger.log(`[${chainConfig.name}] 解析失败(未命中 ERC20 入账或 WETH unwrap)`);    
+    return null;
+  }
+
+  private topicToAddress(topic?: string): string | null {
+    if (!topic || topic.length < 42) return null;
+    return `0x${topic.slice(26)}`.toLowerCase();
   }
 }
 

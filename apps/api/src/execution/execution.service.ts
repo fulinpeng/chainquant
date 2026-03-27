@@ -39,7 +39,6 @@ type ExecuteResult =
 @Injectable()
 export class ExecutionService {
   private readonly logger = new Logger(ExecutionService.name);
-  private readonly arbUsdc = "0xaf88d065e77c8cc2239327c5edb3a432268e5831";
   private inFlight = false;
   constructor(private readonly quoterService: QuoterService) {}
 
@@ -238,11 +237,14 @@ export class ExecutionService {
   }
 
   private isAllowedPair(tokenIn: string, tokenOut: string): boolean {
-    const weth = CHAINS.arb.wrappedNative.address.toLowerCase();
-    const usdc = this.arbUsdc.toLowerCase();
     const a = (tokenIn ?? "").toLowerCase();
     const b = (tokenOut ?? "").toLowerCase();
-    return (a === weth && b === usdc) || (a === usdc && b === weth);
+    const stableAddrs = CHAINS.arb.stableTokens.map((t) => t.address.toLowerCase());
+    if (!a || !b || a === b) return false;
+    const aIsStable = stableAddrs.includes(a);
+    const bIsStable = stableAddrs.includes(b);
+    // 仅允许“稳定币 <-> 非稳定币”，拒绝稳定币互换与非稳定币互换。
+    return aIsStable !== bIsStable;
   }
 
   private parseRawAmount(raw?: string): bigint | null {

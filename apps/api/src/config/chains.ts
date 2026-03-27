@@ -11,6 +11,10 @@ export type ChainConfig = {
     symbol: string;
     address: string; // lowercased address
   };
+  stableTokens: {
+    symbol: string;
+    address: string; // lowercased address
+  }[];
 };
 
 // Minimal Uniswap V3 periphery recognition via `exactInputSingle`.
@@ -32,6 +36,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
       symbol: "WETH",
       address: "0xc02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".toLowerCase(),
     },
+    stableTokens: [],
   },
   base: {
     key: "base",
@@ -51,6 +56,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
       symbol: "WETH",
       address: "0x4200000000000000000000000000000000000006".toLowerCase(),
     },
+    stableTokens: [],
   },
   op: {
     key: "op",
@@ -65,6 +71,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
       symbol: "WETH",
       address: "0x4200000000000000000000000000000000000006".toLowerCase(),
     },
+    stableTokens: [],
   },
   arb: {
     key: "arb",
@@ -79,6 +86,16 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
       symbol: "WETH",
       address: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1".toLowerCase(),
     },
+    stableTokens: [
+      {
+        symbol: "USDC",
+        address: "0xaf88d065e77c8cc2239327c5edb3a432268e5831".toLowerCase(),
+      },
+      {
+        symbol: "USDT",
+        address: "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9".toLowerCase(),
+      },
+    ],
   },
   bnb: {
     key: "bnb",
@@ -93,6 +110,7 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
       symbol: "WBNB",
       address: "0xbb4cdb9cbdd36b01bd1cbaebf2de08d9173bc095c".toLowerCase(),
     },
+    stableTokens: [],
   },
 };
 

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import WalletHeader from "@/components/WalletHeader";
 import PageTabs from "@/components/PageTabs";
+import { useWallet } from "@/hooks/useWallet";
 
 type WatcherItem = {
   id: string;
@@ -42,6 +43,7 @@ function fmtTime(ts: number) {
 
 export default function Home() {
   const router = useRouter();
+  const { address: walletAddress } = useWallet();
   const [mounted, setMounted] = useState(false);
   const [inputAddress, setInputAddress] = useState("");
   const [busy, setBusy] = useState(false);
@@ -117,9 +119,14 @@ export default function Home() {
 
   async function addWatcher() {
     const addr = inputAddress.trim();
+    const self = (walletAddress ?? "").trim().toLowerCase();
     setError(null);
     if (!addr) {
       setError("请输入 address");
+      return;
+    }
+    if (self && addr.toLowerCase() === self) {
+      setError("不能跟单自己的钱包地址");
       return;
     }
     setBusy(true);

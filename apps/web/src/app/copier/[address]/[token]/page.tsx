@@ -9,7 +9,6 @@ type EngineEvent = {
   id: string;
   type:
     | "SIGNAL"
-    | "EXECUTION"
     | "ENTRY"
     | "EXIT"
     | "INVALID_SIGNAL"
@@ -76,12 +75,6 @@ function fmtNum(n: number | null | undefined) {
 function fmtTradeNum(n: number | null | undefined) {
   if (typeof n !== "number" || !Number.isFinite(n)) return "--";
   return n.toFixed(6);
-}
-
-function extractTxHash(message?: string): string | null {
-  if (!message) return null;
-  const m = message.match(/\b0x[a-fA-F0-9]{64}\b/);
-  return m ? m[0] : null;
 }
 
 export default function EngineDetailPage() {
@@ -233,4 +226,108 @@ export default function EngineDetailPage() {
             <thead className="bg-oo-bg text-xs text-oo-text-muted">
               <tr>
                 <th className="px-3 py-2 font-medium">side</th>
-                <th clas
+                <th className="px-3 py-2 font-medium">entry</th>
+                <th className="px-3 py-2 font-medium">size</th>
+                <th className="px-3 py-2 font-medium">exit</th>
+                <th className="px-3 py-2 font-medium">pnl</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-oo-border text-oo-text-secondary">
+              {(data?.trades ?? []).length === 0 ? (
+                <tr>
+                  <td className="px-3 py-4 text-oo-text-muted" colSpan={5}>
+                    暂无 trades
+                  </td>
+                </tr>
+              ) : (
+                (data?.trades ?? []).map((t) => (
+                  <tr key={t.id}>
+                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
+                      {t.side}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
+                      {fmtTradeNum(t.entryPrice)}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
+                      {fmtTradeNum(t.size)}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
+                      {fmtTradeNum(t.exitPrice)}
+                    </td>
+                    <td
+                      className={`px-3 py-2 font-mono text-xs ${
+                        t.pnl == null
+                          ? "text-oo-text-muted"
+                          : t.pnl >= 0
+                            ? "text-oo-success"
+                            : "text-oo-error"
+                      }`}
+                    >
+                      {fmtTradeNum(t.pnl)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-oo-border bg-oo-surface p-5 shadow-sm">
+        <h2 className="mb-3 text-sm font-semibold text-oo-text">Events</h2>
+        <div className="overflow-x-auto rounded-lg border border-oo-border">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-oo-bg text-xs text-oo-text-muted">
+              <tr>
+                <th className="px-3 py-2 font-medium">时间</th>
+                <th className="px-3 py-2 font-medium">类型</th>
+                <th className="px-3 py-2 font-medium">价格</th>
+                <th className="px-3 py-2 font-medium">说明</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-oo-border text-oo-text-secondary">
+              {(data?.events ?? []).length === 0 ? (
+                <tr>
+                  <td className="px-3 py-4 text-oo-text-muted" colSpan={4}>
+                    暂无 events
+                  </td>
+                </tr>
+              ) : (
+                [...(data?.events ?? [])].reverse().map((ev) => (
+                  <tr key={ev.id}>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-oo-text">
+                      {formatTimeMs(ev.timestamp)}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs">
+                      <span
+                        className={
+                          ev.type === "ERROR"
+                            ? "text-oo-error"
+                            : ev.type === "EXIT"
+                              ? "text-oo-success"
+                              : ev.type === "INVALID_SIGNAL" ||
+                                  ev.type === "COOLDOWN_BLOCK"
+                                ? "text-amber-400"
+                                : "text-oo-text"
+                        }
+                      >
+                        {ev.type}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-oo-text">
+                      {fmtNum(ev.price)}
+                    </td>
+                    <td className="max-w-md truncate px-3 py-2 text-xs text-oo-text-muted">
+                      {ev.message ?? "—"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  );
+}
+
