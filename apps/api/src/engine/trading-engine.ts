@@ -191,11 +191,22 @@ export class TradingEngine {
         slippage: this.config.slippage,
       })
       .then((result) => {
+        const execData: Record<string, unknown> = !result.ok
+          ? { reason: result.reason }
+          : result.debug
+            ? {
+                amountIn: result.debug.amountIn,
+                amountOut: result.debug.quoteAmountOut,
+                minOut: result.debug.minOut,
+                slippage: result.debug.slippage,
+              }
+            : { mode: result.mode };
         void this.dbHooks?.onExecutionEvent?.({
           ok: result.ok,
           mode: result.mode,
           reason: result.ok ? undefined : result.reason,
           txHash: result.ok && result.mode === "live" ? result.txHash : undefined,
+          data: execData,
         });
         if (!result.ok) {
           this.stateStore.addEvent({
@@ -220,6 +231,7 @@ export class TradingEngine {
           ok: false,
           mode: "live",
           reason: msg,
+          data: { reason: msg },
         });
         this.stateStore.addEvent({
           type: "ERROR",

@@ -8,6 +8,7 @@ import { CopierModule } from "./copier/copier.module";
 import { ListenerModule } from "./listener/listener.module";
 import { WatcherModule } from "./watcher/watcher.module";
 import { PersistenceModule } from "./persistence/persistence.module";
+import { QueryModule } from "./query/query.module";
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { PersistenceModule } from "./persistence/persistence.module";
     TradingModule,
     CopierModule,
     WatcherModule,
+    QueryModule,
   ],
 })
 export class AppModule {}

@@ -55,6 +55,8 @@ export type EngineDbHooks = {
     mode: "paper" | "live";
     reason?: string;
     txHash?: string;
+    /** 写入 Event.data，供分析（如 amountIn / slippage）。 */
+    data?: Record<string, unknown> | null;
   }) => void | Promise<void>;
 };
 

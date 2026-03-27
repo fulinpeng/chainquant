@@ -1,34 +1,25 @@
 import { Injectable, Logger } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { eventRepo, tradeRepo, watcherRepo } from "@chainquant/db";
 
 const DEFAULT_CHAIN = "arb";
 
-/** 旁路持久化：失败只打日志，不向调用方抛错。 */
+/** 旁路持久化（引擎/执行）：失败只打日志，不向调用方抛错。 */
 @Injectable()
 export class DbSidecarService {
   private readonly logger = new Logger(DbSidecarService.name);
 
-  async recordWatcherCreated(input: {
-    id: string;
-    address: string;
-    chain: string;
-    status: string;
-  }): Promise<void> {
-    try {
-      await watcherRepo.createWatcher({
-        id: input.id,
-        address: input.address,
-        chain: input.chain,
-        status: input.status,
-      });
-      this.logger.debug(
-        `[db] watcher created id=${input.id} address=${input.address} chain=${input.chain}`,
-      );
-    } catch (err) {
-      this.logger.warn(
-        `[db] createWatcher failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+  private logWriteFail(
+    op: string,
+    err: unknown,
+    ctx: Record<string, string | undefined>,
+  ): void {
+    const msg = err instanceof Error ? err.message : String(err);
+    const ctxStr = Object.entries(ctx)
+      .filter(([, v]) => v != null && v !== "")
+      .map(([k, v]) => `${k}=${v}`)
+      .join(" ");
+    this.logger.warn(`[DB_WRITE_FAIL] ${op} ${ctxStr} error=${msg}`);
   }
 
   async resolveWatcherId(address: string, chain: string = DEFAULT_CHAIN): Promise<string | null> {
@@ -39,7 +30,7 @@ export class DbSidecarService {
       return hit?.id ?? null;
     } catch (err) {
       this.logger.warn(
-        `[db] resolveWatcherId failed: ${err instanceof Error ? err.message : String(err)}`,
+        `[DB_WRITE_FAIL] resolveWatcherId address=${address} chain=${chain} error=${err instanceof Error ? err.message : String(err)}`,
       );
       return null;
     }
@@ -53,6 +44,7 @@ export class DbSidecarService {
     size: number;
     entryPrice: number;
     chain?: string;
+    txHash?: string | null;
   }): Promise<void> {
     try {
       const chain = input.chain ?? DEFAULT_CHAIN;
@@ -71,15 +63,17 @@ export class DbSidecarService {
         side,
         size: input.size,
         entryPrice: input.entryPrice,
+        txHash: input.txHash ?? null,
         watcherId,
       });
       this.logger.debug(
         `[db] trade OPEN id=${input.tradeId} watcherId=${watcherId} side=${side}`,
       );
     } catch (err) {
-      this.logger.warn(
-        `[db] createTrade failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      this.logWriteFail("createTrade", err, {
+        address: input.address,
+        txHash: input.txHash ?? undefined,
+      });
     }
   }
 
@@ -87,6 +81,8 @@ export class DbSidecarService {
     tradeId: string;
     exitPrice: number;
     pnl: number;
+    address?: string;
+    txHash?: string | null;
   }): Promise<void> {
     try {
       await tradeRepo.closeTrade(input.tradeId, input.exitPrice, input.pnl);
@@ -94,9 +90,10 @@ export class DbSidecarService {
         `[db] trade CLOSED id=${input.tradeId} exit=${input.exitPrice} pnl=${input.pnl}`,
       );
     } catch (err) {
-      this.logger.warn(
-        `[db] closeTrade failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      this.logWriteFail("closeTrade", err, {
+        address: input.address,
+        txHash: input.txHash ?? undefined,
+      });
     }
   }
 
@@ -107,6 +104,7 @@ export class DbSidecarService {
     mode: "paper" | "live";
     reason?: string;
     txHash?: string;
+    data?: Record<string, unknown> | null;
   }): Promise<void> {
     try {
       const chain = input.chain ?? DEFAULT_CHAIN;
@@ -121,6 +119,10 @@ export class DbSidecarService {
       await eventRepo.createEvent({
         type,
         message,
+        data:
+          input.data !== undefined && input.data !== null
+            ? (input.data as Prisma.InputJsonValue)
+            : undefined,
         txHash: input.txHash ?? null,
         stage: stage ?? null,
         watcherId,
@@ -129,9 +131,10 @@ export class DbSidecarService {
         `[db] event ${type} watcherId=${watcherId ?? "none"} ok=${input.ok}`,
       );
     } catch (err) {
-      this.logger.warn(
-        `[db] createEvent failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      this.logWriteFail("createEvent", err, {
+        address: input.address,
+        txHash: input.txHash,
+      });
     }
   }
 

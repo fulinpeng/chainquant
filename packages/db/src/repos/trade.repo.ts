@@ -14,11 +14,24 @@ export type CreateTradeData = {
 };
 
 export const tradeRepo = {
+  /**
+   * 当 `txHash` 非空且已存在相同 `(txHash, address)` 时返回已有行，不抛错（幂等）。
+   */
   async createTrade(data: CreateTradeData): Promise<Trade> {
+    const address = data.address.toLowerCase();
+    const tx = data.txHash?.trim() || null;
+    if (tx) {
+      const existing = await prisma.trade.findFirst({
+        where: { txHash: tx, address },
+      });
+      if (existing) {
+        return existing;
+      }
+    }
     return prisma.trade.create({
       data: {
         ...(data.id ? { id: data.id } : {}),
-        address: data.address.toLowerCase(),
+        address,
         token: data.token.toLowerCase(),
         side: data.side,
         size: data.size,
@@ -26,7 +39,7 @@ export const tradeRepo = {
         exitPrice: null,
         pnl: null,
         status: "OPEN",
-        txHash: data.txHash ?? null,
+        txHash: tx,
         watcher: { connect: { id: data.watcherId } },
       },
     });

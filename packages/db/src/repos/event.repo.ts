@@ -1,4 +1,4 @@
-import type { Event as EventRecord } from "@prisma/client";
+import type { Event as EventRecord, Prisma } from "@prisma/client";
 import { prisma } from "../client";
 
 /** 与数据库 `Event` 行一致；命名避免与浏览器 `Event` 混淆。 */
@@ -8,6 +8,7 @@ export type CreateEventData = {
   id?: string;
   type: string;
   message: string;
+  data?: Prisma.InputJsonValue | null;
   txHash?: string | null;
   stage?: string | null;
   watcherId?: string | null;
@@ -20,6 +21,7 @@ export const eventRepo = {
         ...(data.id ? { id: data.id } : {}),
         type: data.type,
         message: data.message,
+        data: data.data ?? undefined,
         txHash: data.txHash ?? null,
         stage: data.stage ?? null,
         ...(data.watcherId != null && data.watcherId !== ""

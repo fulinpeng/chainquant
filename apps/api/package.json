@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@chainquant/db": "workspace:*",
+    "@prisma/client": "^6.19.0",
     "@nestjs/common": "^11.1.17",
     "@nestjs/core": "^11.1.17",
     "@nestjs/platform-express": "^11.1.17",

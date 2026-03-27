@@ -60,7 +60,8 @@ export class EngineManager implements OnModuleDestroy {
               ...p,
               chain: "arb",
             }),
-          onTradeClose: (p) => void this.dbSidecar.recordTradeClose(p),
+          onTradeClose: (p) =>
+            void this.dbSidecar.recordTradeClose({ ...p, address: a }),
           onExecutionEvent: (ev) =>
             void this.dbSidecar.recordExecutionEvent({
               ...ev,

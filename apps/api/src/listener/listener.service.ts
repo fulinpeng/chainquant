@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   Logger,
+  OnApplicationBootstrap,
   OnModuleDestroy,
   OnModuleInit,
 } from "@nestjs/common";
@@ -20,7 +21,7 @@ type ActiveWatcherSnapshot = {
 };
 
 @Injectable()
-export class ListenerService implements OnModuleInit, OnModuleDestroy {
+export class ListenerService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(ListenerService.name);
   private readonly providers = new Map<ChainKey, WebSocketProvider>();
   private readonly activeWatchers = new Map<string, ActiveWatcherSnapshot>();
@@ -32,7 +33,9 @@ export class ListenerService implements OnModuleInit, OnModuleDestroy {
     private readonly marketService: MarketService,
   ) {}
 
-  onModuleInit() {
+  onModuleInit() {}
+
+  onApplicationBootstrap() {
     this.start();
   }
 

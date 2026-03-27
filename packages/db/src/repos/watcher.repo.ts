@@ -1,12 +1,17 @@
-import type { Watcher } from "@prisma/client";
+import type { Prisma, Watcher } from "@prisma/client";
 import { prisma } from "../client";
 
 export type CreateWatcherData = {
-  /** 与业务侧 watcher id 对齐时传入；否则由数据库生成 cuid。 */
   id?: string;
   address: string;
   chain: string;
   status: string;
+  config: Prisma.InputJsonValue;
+};
+
+export type UpdateWatcherData = {
+  status?: string;
+  config?: Prisma.InputJsonValue;
 };
 
 export const watcherRepo = {
@@ -17,6 +22,16 @@ export const watcherRepo = {
         address: data.address.toLowerCase(),
         chain: data.chain,
         status: data.status,
+        config: data.config,
+      },
+    });
+  },
+
+  async findByAddressAndChain(address: string, chain: string): Promise<Watcher | null> {
+    return prisma.watcher.findFirst({
+      where: {
+        address: address.toLowerCase(),
+        chain,
       },
     });
   },
@@ -27,10 +42,21 @@ export const watcherRepo = {
     });
   },
 
+  async updateWatcher(id: string, data: UpdateWatcherData): Promise<Watcher> {
+    return prisma.watcher.update({
+      where: { id },
+      data,
+    });
+  },
+
   async updateWatcherStatus(id: string, status: string): Promise<Watcher> {
     return prisma.watcher.update({
       where: { id },
       data: { status },
     });
+  },
+
+  async deleteWatcher(id: string): Promise<void> {
+    await prisma.watcher.delete({ where: { id } });
   },
 };

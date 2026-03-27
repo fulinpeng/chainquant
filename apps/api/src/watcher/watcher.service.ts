@@ -3,8 +3,10 @@ import {
   Injectable,
   Logger,
   OnModuleInit,
+  ServiceUnavailableException,
 } from "@nestjs/common";
-import { DbSidecarService } from "../persistence/db-sidecar.service";
+import type { Prisma, Watcher as WatcherRow } from "@prisma/client";
+import { watcherRepo } from "@chainquant/db";
 import { ListenerService } from "../listener/listener.service";
 import type { ChainKey } from "../config/chains";
 import * as fs from "node:fs";
@@ -25,17 +27,18 @@ export type Watcher = {
 @Injectable()
 export class WatcherService implements OnModuleInit {
   private readonly logger = new Logger(WatcherService.name);
-  private readonly storagePath = path.join(process.cwd(), "watchers.json");
+  /** 仅作一次性迁移回退读取，不再写入。 */
+  private readonly legacyStoragePath = path.join(process.cwd(), "watchers.json");
   private watcherList: Watcher[] = [];
 
-  constructor(
-    private readonly listenerService: ListenerService,
-    private readonly dbSidecar: DbSidecarService,
-  ) {}
+  constructor(private readonly listenerService: ListenerService) {}
 
-  onModuleInit() {
-    this.loadFromDisk();
-    // Restore running watchers into listener watched set.
+  async onModuleInit() {
+    await this.loadFromDatabase();
+    if (this.watcherList.length === 0) {
+      this.loadFromLegacyJsonReadonly();
+      await this.seedDatabaseFromMemoryIfNeeded();
+    }
     for (const watcher of this.watcherList) {
       if (watcher.status === "RUNNING") {
         this.listenerService.upsertWatcher(watcher);
@@ -43,7 +46,7 @@ export class WatcherService implements OnModuleInit {
     }
   }
 
-  add(address: string, chain: ChainKey = "arb"): Watcher {
+  async add(address: string, chain: ChainKey = "arb"): Promise<Watcher> {
     const normalized = (address ?? "").trim().toLowerCase();
     if (!normalized) throw new BadRequestException("address is required");
     const exists = this.watcherList.some(
@@ -51,46 +54,57 @@ export class WatcherService implements OnModuleInit {
     );
     if (exists) throw new BadRequestException("watcher already exists");
 
-    const watcher: Watcher = {
-      id: createEntityId(),
-      address: normalized,
-      chain,
-      status: "STOPPED",
-      config: { ...DEFAULT_ENGINE_RUNTIME_CONFIG },
-      createdAt: Date.now(),
-    };
-    this.watcherList.push(watcher);
-    this.saveToDisk();
-    void this.dbSidecar.recordWatcherCreated({
-      id: watcher.id,
-      address: watcher.address,
-      chain: watcher.chain,
-      status: watcher.status,
-    });
-    return watcher;
+    const cfg = this.normalizeConfig({ ...DEFAULT_ENGINE_RUNTIME_CONFIG });
+    try {
+      const row = await watcherRepo.createWatcher({
+        id: createEntityId(),
+        address: normalized,
+        chain,
+        status: "STOPPED",
+        config: cfg as unknown as Prisma.InputJsonValue,
+      });
+      const watcher = this.rowToWatcher(row);
+      this.watcherList.push(watcher);
+      return watcher;
+    } catch (err) {
+      this.logDbWriteFail("createWatcher", err, { address: normalized });
+      throw new ServiceUnavailableException("database unavailable");
+    }
   }
 
   list(): Watcher[] {
     return [...this.watcherList].sort((a, b) => b.createdAt - a.createdAt);
   }
 
-  start(address: string, chain: ChainKey = "arb"): Watcher {
+  async start(address: string, chain: ChainKey = "arb"): Promise<Watcher> {
     const watcher = this.getOrThrow(address, chain);
-    watcher.status = "RUNNING";
-    this.listenerService.upsertWatcher(watcher);
-    this.saveToDisk();
-    return watcher;
+    try {
+      const row = await watcherRepo.updateWatcher(watcher.id, { status: "RUNNING" });
+      const next = this.rowToWatcher(row);
+      this.replaceInList(next);
+      this.listenerService.upsertWatcher(next);
+      return next;
+    } catch (err) {
+      this.logDbWriteFail("updateWatcher(start)", err, { address: watcher.address });
+      throw new ServiceUnavailableException("database unavailable");
+    }
   }
 
-  stop(address: string, chain: ChainKey = "arb"): Watcher {
+  async stop(address: string, chain: ChainKey = "arb"): Promise<Watcher> {
     const watcher = this.getOrThrow(address, chain);
-    watcher.status = "STOPPED";
-    this.listenerService.removeWatcher(watcher.address, watcher.chain);
-    this.saveToDisk();
-    return watcher;
+    try {
+      const row = await watcherRepo.updateWatcher(watcher.id, { status: "STOPPED" });
+      const next = this.rowToWatcher(row);
+      this.replaceInList(next);
+      this.listenerService.removeWatcher(next.address, next.chain);
+      return next;
+    } catch (err) {
+      this.logDbWriteFail("updateWatcher(stop)", err, { address: watcher.address });
+      throw new ServiceUnavailableException("database unavailable");
+    }
   }
 
-  delete(address: string, chain: ChainKey = "arb"): { ok: true } {
+  async delete(address: string, chain: ChainKey = "arb"): Promise<{ ok: true }> {
     const normalized = (address ?? "").trim().toLowerCase();
     if (!normalized) throw new BadRequestException("address is required");
     const idx = this.watcherList.findIndex(
@@ -101,36 +115,63 @@ export class WatcherService implements OnModuleInit {
     if (watcher.status === "RUNNING") {
       this.listenerService.removeWatcher(watcher.address, watcher.chain);
     }
-    this.watcherList.splice(idx, 1);
-    this.saveToDisk();
-    return { ok: true };
+    try {
+      await watcherRepo.deleteWatcher(watcher.id);
+      this.watcherList.splice(idx, 1);
+      return { ok: true };
+    } catch (err) {
+      this.logDbWriteFail("deleteWatcher", err, { address: watcher.address });
+      throw new ServiceUnavailableException("database unavailable");
+    }
   }
 
-  updateConfig(
+  async updateConfig(
     address: string,
     chain: ChainKey = "arb",
     patch: Partial<EngineRuntimeConfig>,
-  ): Watcher {
+  ): Promise<Watcher> {
     const watcher = this.getOrThrow(address, chain);
-    watcher.config = this.normalizeConfig({
+    const nextConfig = this.normalizeConfig({
       ...watcher.config,
       ...patch,
     });
-    if (watcher.status === "RUNNING") {
-      this.listenerService.upsertWatcher(watcher);
+    try {
+      const row = await watcherRepo.updateWatcher(watcher.id, {
+        config: nextConfig as unknown as Prisma.InputJsonValue,
+      });
+      const next = this.rowToWatcher(row);
+      this.replaceInList(next);
+      if (next.status === "RUNNING") {
+        this.listenerService.upsertWatcher(next);
+      }
+      return next;
+    } catch (err) {
+      this.logDbWriteFail("updateWatcher(config)", err, { address: watcher.address });
+      throw new ServiceUnavailableException("database unavailable");
     }
-    this.saveToDisk();
-    return watcher;
   }
 
   async replayTx(txHash: string, chain?: ChainKey) {
     return this.listenerService.replayTx({ txHash, chain });
   }
 
-  private loadFromDisk() {
-    if (!fs.existsSync(this.storagePath)) return;
+  private async loadFromDatabase(): Promise<void> {
     try {
-      const raw = fs.readFileSync(this.storagePath, "utf8");
+      const rows = await watcherRepo.listWatchers();
+      this.watcherList = rows.map((r) => this.rowToWatcher(r));
+    } catch (err) {
+      this.logger.warn(
+        `[DB_WRITE_FAIL] listWatchers (read) error=${err instanceof Error ? err.message : String(err)}`,
+      );
+      this.watcherList = [];
+    }
+  }
+
+  /** 仅在数据库为空时尝试从 legacy `watchers.json` 读入内存。 */
+  private loadFromLegacyJsonReadonly(): void {
+    if (!fs.existsSync(this.legacyStoragePath)) return;
+    try {
+      const raw = fs.readFileSync(this.legacyStoragePath, "utf8");
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return;
       this.watcherList = parsed
@@ -152,19 +193,62 @@ export class WatcherService implements OnModuleInit {
         .filter((x) => x.address);
     } catch (err) {
       this.logger.warn(
-        `Failed to load watchers.json: ${err instanceof Error ? err.message : String(err)}`,
+        `Legacy watchers.json read failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
 
-  private saveToDisk() {
-    try {
-      fs.writeFileSync(this.storagePath, JSON.stringify(this.watcherList, null, 2), "utf8");
-    } catch (err) {
-      this.logger.warn(
-        `Failed to save watchers.json: ${err instanceof Error ? err.message : String(err)}`,
-      );
+  /** 将内存中来自 JSON 的条目写入数据库并重新加载。 */
+  private async seedDatabaseFromMemoryIfNeeded(): Promise<void> {
+    if (this.watcherList.length === 0) return;
+    for (const w of [...this.watcherList]) {
+      try {
+        await watcherRepo.createWatcher({
+          id: w.id,
+          address: w.address,
+          chain: w.chain,
+          status: w.status,
+          config: w.config as unknown as Prisma.InputJsonValue,
+        });
+      } catch (err) {
+        this.logDbWriteFail("seedWatcher", err, { address: w.address });
+      }
     }
+    await this.loadFromDatabase();
+  }
+
+  private replaceInList(next: Watcher): void {
+    const i = this.watcherList.findIndex((x) => x.id === next.id);
+    if (i >= 0) this.watcherList[i] = next;
+  }
+
+  private rowToWatcher(row: WatcherRow): Watcher {
+    const raw = row.config as unknown;
+    const cfg =
+      raw && typeof raw === "object"
+        ? this.normalizeConfig(raw as Partial<EngineRuntimeConfig>)
+        : this.normalizeConfig({});
+    return {
+      id: row.id,
+      address: row.address,
+      chain: this.normalizeChain(row.chain),
+      status: row.status === "RUNNING" ? "RUNNING" : "STOPPED",
+      config: cfg,
+      createdAt: row.createdAt.getTime(),
+    };
+  }
+
+  private logDbWriteFail(
+    op: string,
+    err: unknown,
+    ctx: Record<string, string | undefined>,
+  ): void {
+    const msg = err instanceof Error ? err.message : String(err);
+    const ctxStr = Object.entries(ctx)
+      .filter(([, v]) => v != null && v !== "")
+      .map(([k, v]) => `${k}=${v}`)
+      .join(" ");
+    this.logger.warn(`[DB_WRITE_FAIL] ${op} ${ctxStr} error=${msg}`);
   }
 
   private getOrThrow(address: string, chain: ChainKey = "arb"): Watcher {
@@ -223,4 +307,3 @@ export class WatcherService implements OnModuleInit {
     return Number.isFinite(n) ? n : dft;
   }
 }
-

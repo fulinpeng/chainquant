@@ -7,12 +7,13 @@ generator client {
   provider = "prisma-client-js"
 }
 
-/// 监听实例：与 API `Watcher.status`（RUNNING / STOPPED）对齐；运行时配置可后续用独立表或 Json 字段扩展。
+/// 运行时配置 JSON，与 `EngineRuntimeConfig` 对齐。
 model Watcher {
   id        String   @id @default(cuid())
   address   String
   chain     String
   status    String // RUNNING / STOPPED
+  config    Json
   createdAt DateTime @default(now())
 
   trades Trade[]
@@ -21,7 +22,6 @@ model Watcher {
   @@index([address, chain])
 }
 
-/// 成交：侧向用字符串存（如 BUY/SELL；引擎 LONG/SHORT 在写入层映射）；时间与风控字段可按需再加列迁移。
 model Trade {
   id         String   @id @default(cuid())
   address    String
@@ -44,18 +44,22 @@ model Trade {
   watcherId String
   watcher   Watcher @relation(fields: [watcherId], references: [id], onDelete: Cascade)
 
+  @@unique([txHash, address])
   @@index([watcherId])
+  @@index([address])
+  @@index([status])
   @@index([address, token])
 }
 
-/// 引擎 / 执行流水：类型与 stage 均用字符串，便于新增枚举值而不改 schema。
+/// message 展示；data 结构化分析字段。
 model Event {
   id      String @id @default(cuid())
   type    String // SIGNAL / EXECUTION / ERROR
   message String
+  data    Json?
 
   txHash String?
-  stage  String? // quote_failed / send_tx_failed / ...
+  stage  String?
 
   createdAt DateTime @default(now())
 
