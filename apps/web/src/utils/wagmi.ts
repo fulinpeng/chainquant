@@ -2,7 +2,7 @@ import { http, createConfig } from "wagmi";
 import { mainnet, base, bsc, arbitrum, optimism } from "wagmi/chains";
 import { injected } from "wagmi/connectors";
 
-/** wagmi: browser-injected wallets such as MetaMask */
+/** wagmi：浏览器注入式钱包（如 MetaMask） */
 export const wagmiConfig = createConfig({
   ssr: true,
   chains: [mainnet, base, bsc, arbitrum, optimism],

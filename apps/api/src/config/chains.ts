@@ -5,20 +5,20 @@ export type ChainConfig = {
   name: string;
   enabled: boolean;
   wsUrlEnv: string;
-  v3Routers: string[]; // lowercased addresses
-  v4UniversalRouters: string[]; // lowercased addresses
+  v3Routers: string[]; // 已小写的合约地址列表
+  v4UniversalRouters: string[]; // 已小写的合约地址列表
   wrappedNative: {
     symbol: string;
-    address: string; // lowercased address
+    address: string; // 已小写的合约地址
   };
   stableTokens: {
     symbol: string;
-    address: string; // lowercased address
+    address: string; // 已小写的合约地址
   }[];
 };
 
-// Minimal Uniswap V3 periphery recognition via `exactInputSingle`.
-// Add/adjust router addresses as you discover them on each chain.
+// 仅通过 `exactInputSingle` 做最小化的 Uniswap V3 外围合约识别。
+// 可在各链上按实际情况增删 Router 地址。
 export const CHAINS: Record<ChainKey, ChainConfig> = {
   ethereum: {
     key: "ethereum",
@@ -44,9 +44,9 @@ export const CHAINS: Record<ChainKey, ChainConfig> = {
     enabled: false,
     wsUrlEnv: "BASE_WS_URL",
     v3Routers: [
-      // Base deployments (commonly used SwapRouter02 address)
+      // Base 上常用 SwapRouter02 部署地址之一
       "0x2626664c2603336e57b271c5c0b26f421741e481",
-      // Some routers share the same address across chains as well.
+      // 部分 Router 地址在多链间相同
       "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45",
     ],
     v4UniversalRouters: [

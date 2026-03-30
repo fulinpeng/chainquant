@@ -33,11 +33,11 @@ export const DEFAULT_ENGINE_RUNTIME_CONFIG: EngineRuntimeConfig = {
 
 export type CopierSignalPayload = {
   type: "BUY" | "SELL";
-  /** Optional external observed price for test/manual entry. */
+  /** 外部观测价格（测试/手动入场时可选）。 */
   price?: number;
-  /** Optional raw amount from chain parser (stringified integer). */
+  /** 链上解析得到的原始数量（整数字符串）。 */
   amount?: string;
-  /** Optional source chain key. */
+  /** 来源链标识（可选）。 */
   chain?: string;
 };
 
@@ -72,9 +72,9 @@ export type EngineStatusDto = {
   running: boolean;
   mode: EngineMode;
   state: EngineState;
-  /** Copier / wallet dimension (multi-instance key). */
+  /** 跟单维度：钱包地址（多实例键）。 */
   address: string;
-  /** Traded token contract (multi-instance key). */
+  /** 交易标的代币合约（多实例键）。 */
   token: string;
   currentPrice: number | null;
   entryPrice: number | null;
@@ -98,7 +98,7 @@ export type EngineResultDto = {
   };
 };
 
-/** Min ticks after EXIT before accepting a new signal (proxy for "candles"). */
+/** 平仓后需再经历的 tick 数，之后才接受新信号（近似 K 线根数）。 */
 export const COOLDOWN_CANDLES = 10;
 
 export const ENGINE_TICK_MS = 2000;

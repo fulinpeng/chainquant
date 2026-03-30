@@ -28,7 +28,7 @@ export class AuthService {
         throw new BadRequestException("Invalid SIWE signature");
       }
     } catch {
-      // `siwe` rejects with an object like { success: false, error: ... } when suppressExceptions is false.
+      // `siwe` 在 suppressExceptions=false 时可能以 { success: false, error: ... } 形式 reject。
       throw new BadRequestException("Invalid SIWE signature");
     }
 

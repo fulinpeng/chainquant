@@ -25,7 +25,7 @@ type MarketDataset = {
 
 const DATA_FILE_PATH = path.resolve(__dirname, "../../data/ethUSDT-4h.js");
 
-/** WETH on Ethereum mainnet — hardcoded for MVP live price via Dexscreener. */
+/** 以太坊主网 WETH 地址 — MVP 下用于 Dexscreener 现价查询的写死常量。 */
 const DEXSCREENER_ETH_TOKEN =
   "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
@@ -40,9 +40,9 @@ type DexscreenerTokenResponse = {
   pairs?: DexscreenerPair[];
 };
 
-/** Ignore fork-chain pools that reuse WETH address with fake ~0 USD prices. */
+/** 忽略分叉链上复用 WETH 地址、价格接近 0 的假池子。 */
 const PREFERRED_CHAIN = "ethereum";
-/** ETH spot should be well above this (USD). */
+/** ETH 现价应远高于此值（美元），用于过滤异常报价。 */
 const MIN_SANE_PRICE_USD = 100;
 
 let cachedDataset: MarketDataset | null = null;
@@ -50,7 +50,7 @@ let cachedDataset: MarketDataset | null = null;
 function loadDataset(): MarketDataset {
   if (cachedDataset) return cachedDataset;
 
-  // The local dataset file uses CommonJS `module.exports`.
+  // 本地 K 线数据文件为 CommonJS 的 `module.exports`。
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const mod = require(DATA_FILE_PATH) as MarketDataset;
   if (!mod || !Array.isArray(mod.kLineData)) {
@@ -117,14 +117,14 @@ export class MarketService {
   }
 
   /**
-   * Latest token price in USD from Dexscreener (MVP: fixed ETH / WETH).
+   * 从 Dexscreener 获取代币 USD 现价（MVP：内部固定为 ETH/WETH）。
    */
   async getLatestPrice(): Promise<number> {
     return this.getLatestPriceByToken(DEXSCREENER_ETH_TOKEN);
   }
 
   /**
-   * Latest token price in USD from Dexscreener for a specific ERC20 token.
+   * 从 Dexscreener 按合约地址查询该 ERC20 的 USD 现价。
    */
   async getLatestPriceByToken(tokenAddress: string): Promise<number> {
     const token = (tokenAddress ?? "").trim();
@@ -162,7 +162,7 @@ export class MarketService {
     const symbol = (params.symbol ?? "").toLowerCase().trim();
     const interval = (params.interval ?? "").toLowerCase().trim();
 
-    // MVP: only one dataset file is supported.
+    // MVP：仅支持一份本地数据集文件。
     if (symbol !== "eth") {
       throw new BadRequestException("Unsupported symbol for MVP");
     }

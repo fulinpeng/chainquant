@@ -12,7 +12,7 @@ model Watcher {
   id        String   @id @default(cuid())
   address   String
   chain     String
-  status    String // RUNNING / STOPPED
+  status    String // 运行状态：RUNNING（运行中）/ STOPPED（已停止）
   config    Json
   createdAt DateTime @default(now())
 
@@ -26,7 +26,7 @@ model Trade {
   id         String   @id @default(cuid())
   address    String
   token      String
-  side       String // BUY / SELL
+  side       String // 方向：BUY / SELL
   size       Float
 
   entryPrice Float
@@ -34,7 +34,7 @@ model Trade {
 
   pnl        Float?
 
-  status     String // OPEN / CLOSED
+  status     String // 成交状态：OPEN（持仓中）/ CLOSED（已平仓）
 
   txHash     String?
 
@@ -54,7 +54,7 @@ model Trade {
 /// message 展示；data 结构化分析字段。
 model Event {
   id      String @id @default(cuid())
-  type    String // SIGNAL / EXECUTION / ERROR
+  type    String // 事件类型：SIGNAL / EXECUTION / ERROR
   message String
   data    Json?
 

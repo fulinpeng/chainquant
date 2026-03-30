@@ -6,9 +6,9 @@ import type { TransactionReceipt } from "ethers";
 export type ParsedSwap = {
   token: string;
   type: "BUY" | "SELL";
-  /** Raw amount in smallest units of `amountInToken` (the swap leg used for notional). */
+  /** 以 `amountInToken` 最小单位计的原始数量（用于名义计算的那一腿）。 */
   amount: string;
-  /** ERC-20 (or wrapped native) that `amount` uses for decimals; may differ from `token` (e.g. BUY spends WETH). */
+  /** `amount` 所用的 ERC-20（或封装原生币）地址，用于小数位；可能与信号标的 `token` 不同（如买单花的是 WETH）。 */
   amountInToken: string;
 };
 
@@ -20,9 +20,9 @@ export class ParserService {
   ]);
 
   private static readonly TRANSFER_TOPIC0 =
-    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"; // Transfer(address,address,uint256)
+    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"; // ERC20 Transfer 事件签名 Transfer(address,address,uint256)
 
-  // Uniswap V4 PoolManager Swap event topic0 (matches Arbiscan screenshot example).
+  // Uniswap V4 PoolManager 的 Swap 事件 topic0（与 Arbiscan 示例一致）。
   private static readonly UNISWAP_V4_SWAP_TOPIC0 =
     "0x40e9cecb9f5f1f1c5b9c97dec2917b7ee92e57ba5563708daca94dd84ad7112f";
 
@@ -51,7 +51,7 @@ export class ParserService {
       return null;
     }
 
-    // Uniswap V3: SwapRouter02 exactInputSingle
+    // Uniswap V3：SwapRouter02 的 exactInputSingle
     if (isV3Router) {
       if (!data.startsWith("0x04e45aaf")) {
         this.logger.log(`[${chainConfig.name}] 非 exactInputSingle swap`);
@@ -85,7 +85,7 @@ export class ParserService {
       }
     }
 
-    // Uniswap V4: Universal Router (execute) -> parse from receipt logs
+    // Uniswap V4：Universal Router（execute）— 从 receipt 日志解析
     if (isV4UniversalRouter) {
       const receipt = ctx?.receipt;
       const userAddress = ctx?.userAddress;
@@ -133,7 +133,7 @@ export class ParserService {
       if (log.topics[0]?.toLowerCase() !== ParserService.TRANSFER_TOPIC0) continue;
       if (!log.data) continue;
 
-      // topics: [event sig, from, to]
+      // topics: [事件签名, from, to]
       let value: bigint;
       try {
         value = BigInt(log.data);
@@ -146,19 +146,19 @@ export class ParserService {
       const fromAddr = this.topicToAddress(log.topics[1]);
       const toAddr = this.topicToAddress(log.topics[2]);
 
-      // Option A: user receives ERC20 token directly.
+      // 情况 A：用户直接收到 ERC20。
       if (toAddr === user && (bestTokenOut === null || value > bestValue)) {
         bestTokenOut = tokenAddr;
         bestValue = value;
       }
 
-      // Track user's major outgoing ERC20 token for unwrap fallback.
+      // 记录用户主要转出的 ERC20，供 unwrap 回退路径使用。
       if (fromAddr === user && tokenAddr !== wrappedNative && value > userSentValue) {
         userSentToken = tokenAddr;
         userSentValue = value;
       }
 
-      // Option B signal: WETH unwrap (router burns WETH to zero and sends native ETH internally).
+      // 情况 B：WETH unwrap（路由把 WETH 销毁为零地址，内部换出原生 ETH）。
       if (
         tokenAddr === wrappedNative &&
         toAddr === "0x0000000000000000000000000000000000000000" &&
@@ -179,7 +179,7 @@ export class ParserService {
       };
     }
 
-    // Fallback for V4 USDC -> ETH style swap: no ERC20 to user, but unwrap exists.
+    // V4 回退：类 USDC→ETH，用户未直接收到 ERC20，但存在 unwrap。
     if (hasWethUnwrapToNative && userSentToken && userSentValue > 0n) {
       return {
         token: getAddress(userSentToken),

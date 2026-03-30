@@ -1,4 +1,4 @@
--- CreateTable
+-- 创建表
 CREATE TABLE "Watcher" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "address" TEXT NOT NULL,
@@ -8,7 +8,7 @@ CREATE TABLE "Watcher" (
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- CreateTable
+-- 创建表
 CREATE TABLE "Trade" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "address" TEXT NOT NULL,
@@ -26,7 +26,7 @@ CREATE TABLE "Trade" (
     CONSTRAINT "Trade_watcherId_fkey" FOREIGN KEY ("watcherId") REFERENCES "Watcher" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
--- CreateTable
+-- 创建表
 CREATE TABLE "Event" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "type" TEXT NOT NULL,
@@ -39,26 +39,26 @@ CREATE TABLE "Event" (
     CONSTRAINT "Event_watcherId_fkey" FOREIGN KEY ("watcherId") REFERENCES "Watcher" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
--- CreateIndex
+-- 创建索引
 CREATE INDEX "Watcher_address_chain_idx" ON "Watcher"("address", "chain");
 
--- CreateIndex
+-- 创建索引
 CREATE INDEX "Trade_watcherId_idx" ON "Trade"("watcherId");
 
--- CreateIndex
+-- 创建索引
 CREATE INDEX "Trade_address_idx" ON "Trade"("address");
 
--- CreateIndex
+-- 创建索引
 CREATE INDEX "Trade_status_idx" ON "Trade"("status");
 
--- CreateIndex
+-- 创建索引
 CREATE INDEX "Trade_address_token_idx" ON "Trade"("address", "token");
 
--- CreateIndex
+-- 创建索引
 CREATE UNIQUE INDEX "Trade_txHash_address_key" ON "Trade"("txHash", "address");
 
--- CreateIndex
+-- 创建索引
 CREATE INDEX "Event_watcherId_idx" ON "Event"("watcherId");
 
--- CreateIndex
+-- 创建索引
 CREATE INDEX "Event_createdAt_idx" ON "Event"("createdAt");

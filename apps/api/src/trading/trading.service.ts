@@ -5,7 +5,7 @@ import type { Signal } from "../signal/signal.service";
 type PendingEntry = {
   signal: Signal;
   entryPrice: number;
-  expiresAtIndex: number; // inclusive index
+  expiresAtIndex: number; // 包含该索引在内的到期 K 线索引
 };
 
 type Position = {
@@ -51,7 +51,7 @@ export function computeAtrSimpleAvgHighLow(
 }
 
 function maybeCloseLong(candle: MarketCandle, pos: Position) {
-  // If both SL/TP are hit in the same candle, prioritize stop-loss (conservative).
+  // 同一根 K 线同时触发止损与止盈时，优先止损（偏保守）。
   if (candle.low <= pos.stopLoss) return { hit: true, price: pos.stopLoss };
   if (candle.high >= pos.takeProfit) return { hit: true, price: pos.takeProfit };
   return { hit: false, price: 0 };
@@ -60,7 +60,7 @@ function maybeCloseLong(candle: MarketCandle, pos: Position) {
 @Injectable()
 export class TradingService {
   /**
-   * Shared ATR helper for engines / backtests (not the full `run()` pipeline).
+   * 供引擎/回测共用的 ATR 计算（非完整 `run()` 流水线）。
    */
   computeAtr(
     candles: MarketCandle[],
@@ -90,7 +90,7 @@ export class TradingService {
     for (let i = 0; i < candles.length; i++) {
       const candle = candles[i];
 
-      // 1) If we have a position, check SL/TP first.
+      // 1）有持仓时先检查止损/止盈。
       if (position) {
         const hit = maybeCloseLong(candle, position);
         if (hit.hit) {
@@ -105,18 +105,18 @@ export class TradingService {
         }
       }
 
-      // 2) If no position, handle pending entry (timeout / trigger).
+      // 2）无持仓时处理待入场（超时 / 触发）。
       if (!position && pending) {
         if (i > pending.expiresAtIndex) {
           pending = null;
         } else {
-          // Rule: price <= entryPrice => enter long. We use candle.low as "touched".
+          // 规则：价格 ≤ 入场价则做多入场；用 candle.low 表示「曾触及」。
           if (candle.low <= pending.entryPrice) {
             const atr = this.computeAtr(candles, i, atrPeriod);
             if (atr !== null && Number.isFinite(atr) && atr > 0) {
               const entryPrice = pending.entryPrice;
               const stopLoss = entryPrice - atr * 2;
-              const takeProfit = entryPrice + (entryPrice - stopLoss) * 2; // RR 1:2
+              const takeProfit = entryPrice + (entryPrice - stopLoss) * 2; // 盈亏比 1:2
               position = {
                 entryTime: candle.time,
                 entryPrice,
@@ -129,8 +129,8 @@ export class TradingService {
         }
       }
 
-      // 3) Consume signals when candle.time matches.
-      // Keep the original behavior: only react when there is no position and no pending entry.
+      // 3）在 candle.time 与信号时间对齐时消费信号。
+      // 保持原逻辑：仅在没有持仓且没有待入场时才响应。
       if (!position && !pending) {
         const list = signalsByTime.get(candle.time);
         const signal = list?.find((s) => s.type === "BUY");
@@ -145,7 +145,7 @@ export class TradingService {
       }
     }
 
-    // 4) End of backtest: if still in position, close at the last close price.
+    // 4）回测结束：若仍有持仓，按最后一根 K 线收盘价平仓。
     if (position) {
       const last = candles[candles.length - 1];
       trades.push({

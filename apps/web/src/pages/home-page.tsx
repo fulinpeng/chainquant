@@ -112,7 +112,7 @@ export default function Home() {
       if (!res.ok) return;
       setEngineList(Array.isArray(data) ? (data as EngineListItem[]) : []);
     } catch {
-      // ignore for watcher page
+      // 首页忽略引擎列表请求失败
     }
   }, [apiBaseUrl]);
 
@@ -123,7 +123,7 @@ export default function Home() {
       if (!res.ok) return;
       setGlobalStats(data as GlobalStats);
     } catch {
-      // ignore on home page
+      // 首页忽略全局统计请求失败
     }
   }, [apiBaseUrl]);
 

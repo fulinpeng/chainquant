@@ -176,8 +176,8 @@ export class EngineManager implements OnModuleDestroy {
   }
 
   /**
-   * Route signal to the engine for `address` + `signal.token`.
-   * `token` on payload defaults to `address` when omitted (single-key MVP).
+   * 将信号路由到 `address` + `signal.token` 对应的引擎。
+   * 若载荷未带 `token`，则默认等于 `address`（单键 MVP）。
    */
   handleSignal(
     address: string,
@@ -211,10 +211,10 @@ export class EngineManager implements OnModuleDestroy {
   }
 
   /**
-   * Minimal testing entry for Engine system.
-   * - Auto create/reuse engine by (address, token)
-   * - Auto start when not running
-   * - Trigger one manual signal (BUY) to drive FSM into WAITING_ENTRY
+   * 引擎系统的最小测试入口。
+   * - 按 (address, token) 自动创建/复用引擎
+   * - 未运行时自动 start
+   * - 触发一笔手动 BUY，使状态机进入 WAITING_ENTRY
    */
   async handleSignalTest(input: {
     address: string;
@@ -286,12 +286,12 @@ export class EngineManager implements OnModuleDestroy {
     }
   }
 
-  /** Call after an engine transitions to running. */
+  /** 在引擎进入 running 后调用。 */
   notifyEngineStarted() {
     this.refreshTickTimer();
   }
 
-  /** Call after an engine stops. */
+  /** 在引擎停止后调用。 */
   notifyEngineStopped() {
     this.refreshTickTimer();
   }

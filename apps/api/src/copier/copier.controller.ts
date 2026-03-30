@@ -18,7 +18,7 @@ type CopierRunBody = {
 
 type CopierEngineKeyBody = {
   address: string;
-  /** Traded token; defaults to `address` when omitted. */
+  /** 交易标的代币；省略时默认与 `address` 相同。 */
   token?: string;
 };
 

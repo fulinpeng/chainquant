@@ -82,14 +82,14 @@ function computeAtrSimpleAvgHighLow(
 }
 
 function closeLong(candle: MarketCandle, pos: Position) {
-  // Stop-loss has priority over take-profit if both are hit in the same candle.
+  // 同一根 K 线同时触发止损与止盈时，止损优先。
   if (candle.low <= pos.stopLoss) return { hit: true, price: pos.stopLoss };
   if (candle.high >= pos.takeProfit) return { hit: true, price: pos.takeProfit };
   return { hit: false, price: 0 };
 }
 
 function closeShort(candle: MarketCandle, pos: Position) {
-  // Stop-loss has priority over take-profit if both are hit in the same candle.
+  // 同一根 K 线同时触发止损与止盈时，止损优先。
   if (candle.high >= pos.stopLoss) return { hit: true, price: pos.stopLoss };
   if (candle.low <= pos.takeProfit) return { hit: true, price: pos.takeProfit };
   return { hit: false, price: 0 };
@@ -126,12 +126,12 @@ export class BacktestService {
 
     let position: Position | null = null;
 
-    // Use i starting at 50 as in the requested loop rule.
+    // 按约定从 i=50 开始主循环。
     for (let i = 50; i < candles.length; i++) {
       const candle = candles[i];
       const signal = computeSignalFromCloses(closes, i);
 
-      // 1) If we have a position, check SL/TP first.
+      // 1）有持仓时先检查止损/止盈。
       if (position) {
         if (position.side === "LONG") {
           const hit = closeLong(candle, position);
@@ -169,7 +169,7 @@ export class BacktestService {
           }
         }
 
-        // 2) If no SL/TP hit, check reverse signal next.
+        // 2）未触发止损/止盈时，再检查反向信号。
         const reverseSignal =
           (position.side === "LONG" && signal === "SELL") ||
           (position.side === "SHORT" && signal === "BUY");
@@ -196,7 +196,7 @@ export class BacktestService {
         }
       }
 
-      // 3) Open only if there is no open position.
+      // 3）仅在没有持仓时开仓。
       if (!position) {
         if (signal === "HOLD") continue;
 
@@ -212,7 +212,7 @@ export class BacktestService {
             entryTime,
             entryPrice,
             stopLoss: entryPrice - atr * 3,
-            takeProfit: entryPrice + atr * 6, // 1:2
+            takeProfit: entryPrice + atr * 6, // 盈亏比 1:2
           };
         } else if (signal === "SELL") {
           position = {
@@ -220,13 +220,13 @@ export class BacktestService {
             entryTime,
             entryPrice,
             stopLoss: entryPrice + atr * 3,
-            takeProfit: entryPrice - atr * 6, // 1:2
+            takeProfit: entryPrice - atr * 6, // 盈亏比 1:2
           };
         }
       }
     }
 
-    // Close any open position at the end using the last close.
+    // 末尾用最后一根收盘价平掉仍在场的仓位。
     if (position) {
       const last = candles[candles.length - 1];
       const exitTime = last.time;

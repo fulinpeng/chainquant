@@ -13,8 +13,8 @@ export type ChainCatalogItem = {
 };
 
 /**
- * Chain catalog for UI display and runtime allowlisting (SIWE chainId binding).
- * Keep it simple in MVP: no React icon components here.
+ * 链目录：用于 UI 展示与运行时白名单（如 SIWE 绑定 chainId）。
+ * MVP 保持简单：此处不放 React 图标组件。
  */
 export const CHAIN_CATALOG: ChainCatalogItem[] = [
   {

@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 function loadLocalEnv() {
-  // Load in order: `.env.production` then `.env` (later file does not override existing env).
+  // 按顺序加载 `.env.production`、`.env`（已存在的环境变量不被后写文件覆盖）。
   const envFiles = [".env.production", ".env"];
   for (const fileName of envFiles) {
     const envPath = path.join(process.cwd(), fileName);
@@ -42,7 +42,7 @@ async function bootstrap() {
     ? corsOrigins.split(",").map((o) => o.trim()).filter(Boolean)
     : defaultOrigins;
 
-    // Enable CORS
+    // 启用 CORS
   app.enableCors({
     origin: origins,
     methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],

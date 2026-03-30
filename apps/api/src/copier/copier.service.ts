@@ -17,7 +17,7 @@ export class CopierService {
       throw new BadRequestException("address is required");
     }
 
-    // MVP: use local ETH/4H candles as the data source.
+    // MVP：使用本地 ETH / 4H K 线作为数据源。
     const candles = this.marketService.getCandles({
       symbol: "eth",
       interval: "4h",

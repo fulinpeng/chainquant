@@ -45,7 +45,7 @@ export class ListenerService implements OnModuleInit, OnApplicationBootstrap, On
       try {
         await provider.destroy();
       } catch {
-        // ignore
+        // 忽略销毁错误
       }
     }
     this.providers.clear();
@@ -178,7 +178,7 @@ export class ListenerService implements OnModuleInit, OnApplicationBootstrap, On
     blockNumber: number,
   ): Promise<void> {
     try {
-      // Fetch block with full tx objects in one request to avoid per-tx RPC fan-out.
+      // 一次请求拉取带完整交易的区块，避免按笔交易分散 RPC。
       const block = await provider.getBlock(blockNumber, true);
       const txs = block?.transactions ?? [];
       for (const txItem of txs) {
@@ -324,7 +324,7 @@ export class ListenerService implements OnModuleInit, OnApplicationBootstrap, On
     return d;
   }
 
-  /** USD notional of the parsed swap leg (`amount` × price of `amountInToken` via Dexscreener). */
+  /** 解析得到的 swap USD（`amount` × Dexscreener 上 `amountInToken` 的 USD 价）。 */
   private async estimateSwapNotionalUsd(
     provider: WebSocketProvider,
     chainKey: ChainKey,

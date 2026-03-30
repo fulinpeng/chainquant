@@ -77,7 +77,7 @@ export class StateStore {
     this.pendingSignal = next;
   }
 
-  /** Clears position, pending signal, and trade history (events retained). */
+  /** 清空持仓、待处理信号与成交历史（事件列表保留）。 */
   resetTradingState(): void {
     this.position = null;
     this.pendingSignal = null;

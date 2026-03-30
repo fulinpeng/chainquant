@@ -24,7 +24,7 @@ function nowUnixSec(): number {
 }
 
 /**
- * One live trading instance: isolated {@link StateStore}, single `token` book.
+ * 单个实盘/模拟引擎实例：独立 {@link StateStore}，单一 `token` 标的。
  */
 export class TradingEngine {
   private readonly logger: Logger;
@@ -276,7 +276,7 @@ export class TradingEngine {
       });
   }
 
-  /** Single scheduler tick: fetch price and advance FSM once. */
+  /** 单次调度：拉取价格并推进状态机一步。 */
   async onTick(): Promise<void> {
     if (!this.running) return;
 
@@ -302,7 +302,7 @@ export class TradingEngine {
       switch (this.state) {
         case "IDLE": {
           if (this.mode === "AUTO") {
-            /* reserved */
+            /* 预留：AUTO 模式下的 IDLE 分支逻辑 */
           }
           break;
         }
@@ -538,7 +538,7 @@ export class TradingEngine {
         pnl,
       });
     } else {
-      // Fallback for robustness if OPEN trade record is missing.
+      // 若缺少 OPEN 成交记录时的兜底，保证能平仓落账。
       const trade: Trade = {
         id: createEntityId(),
         token: pos.token,
@@ -571,7 +571,7 @@ export class TradingEngine {
     if (!Number.isFinite(cap) || cap < 0) {
       return riskBasedSize;
     }
-    // No minimum trade-size floor: only cap by watcher config.
+    // 不设最小下单量下限，仅按 watcher 配置的上限封顶。
     return Math.min(riskBasedSize, cap);
   }
 }
