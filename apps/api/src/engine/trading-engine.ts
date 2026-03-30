@@ -220,19 +220,28 @@ export class TradingEngine {
             ? undefined
             : liveWithoutTxHash
               ? "live_tx_missing"
-              : result.reason,
-          txHash: result.mode === "live" && result.txHash ? result.txHash : undefined,
+              : !result.ok
+                ? result.reason
+                : undefined,
+          txHash:
+            result.mode === "live" && result.ok && result.txHash ? result.txHash : undefined,
           data: execData,
         });
         if (!canEnterPosition) {
           this.executionPending = false;
           this.executionReady = false;
-          this.executionFailReason = liveWithoutTxHash ? "live_tx_missing" : result.reason;
+          this.executionFailReason = liveWithoutTxHash
+            ? "live_tx_missing"
+            : !result.ok
+              ? result.reason
+              : "unknown";
           this.stateStore.addEvent({
             type: "ERROR",
             message: liveWithoutTxHash
               ? "Execution failed: live_tx_missing"
-              : `Execution failed: ${result.reason}`,
+              : !result.ok
+                ? `Execution failed: ${result.reason}`
+                : "Execution failed: unknown",
           });
           return;
         }

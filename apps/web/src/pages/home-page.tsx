@@ -21,6 +21,8 @@ type WatcherItem = {
     mode: "paper" | "live";
     maxTradeAmount: number;
     slippage: number;
+    /** 0 = 不筛选；链上 swap 名义(USD)须 ≥ 此值才跟单 */
+    minSignalNotionalUsdt: number;
   };
   createdAt: number;
 };
@@ -70,6 +72,7 @@ export default function Home() {
     mode: "paper" as "paper" | "live",
     maxTradeAmount: "",
     slippage: "",
+    minSignalNotionalUsdt: "",
   });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -227,6 +230,9 @@ export default function Home() {
       mode: w.config.mode,
       maxTradeAmount: String(w.config.maxTradeAmount),
       slippage: String(w.config.slippage),
+      minSignalNotionalUsdt: String(
+        w.config.minSignalNotionalUsdt ?? 0,
+      ),
     });
   }
 
@@ -241,6 +247,7 @@ export default function Home() {
       mode: editConfig.mode,
       maxTradeAmount: Number(editConfig.maxTradeAmount),
       slippage: Number(editConfig.slippage),
+      minSignalNotionalUsdt: Number(editConfig.minSignalNotionalUsdt),
     };
     setError(null);
     try {
@@ -538,6 +545,26 @@ export default function Home() {
                   }
                   className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
                 />
+              </label>
+              <label className="grid grid-cols-[120px_1fr] items-start gap-3 text-xs text-oo-text-muted">
+                <span className="pt-2">minNotional</span>
+                <div className="flex flex-col gap-1">
+                  <input
+                    value={editConfig.minSignalNotionalUsdt}
+                    onChange={(e) =>
+                      setEditConfig((s) => ({
+                        ...s,
+                        minSignalNotionalUsdt: e.target.value,
+                      }))
+                    }
+                    placeholder="0"
+                    className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                  />
+                  <span className="text-[11px] leading-snug text-oo-text-muted">
+                    信号最小成交额（USDT/USD 计价）。仅当链上解析到的该笔 swap 名义不低于此值时才跟单；填 0
+                    表示不限制。
+                  </span>
+                </div>
               </label>
               <label className="flex items-center gap-2 text-sm text-oo-text-secondary">
                 <input

@@ -290,6 +290,10 @@ export class WatcherService implements OnModuleInit {
       merged.slippage,
       DEFAULT_ENGINE_RUNTIME_CONFIG.slippage,
     );
+    const minSignalNotionalUsdt = this.numOrDefault(
+      merged.minSignalNotionalUsdt,
+      DEFAULT_ENGINE_RUNTIME_CONFIG.minSignalNotionalUsdt,
+    );
     return {
       riskPerTrade: Math.min(1, Math.max(0, riskPerTrade)),
       stopLossPct: Math.max(0, stopLossPct),
@@ -299,6 +303,7 @@ export class WatcherService implements OnModuleInit {
       mode: merged.mode === "live" ? "live" : "paper",
       maxTradeAmount: Math.max(0, maxTradeAmount),
       slippage: Math.min(0.05, Math.max(0.0001, slippage)),
+      minSignalNotionalUsdt: Math.max(0, minSignalNotionalUsdt),
     };
   }
 

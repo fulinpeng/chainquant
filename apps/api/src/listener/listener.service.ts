@@ -6,11 +6,11 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from "@nestjs/common";
-import { WebSocketProvider } from "ethers";
+import { Contract, getAddress, WebSocketProvider } from "ethers";
 import { EngineManager } from "../engine/engine.manager";
 import type { EngineRuntimeConfig } from "../engine/types";
 import { MarketService } from "../market/market.service";
-import { ParserService } from "./parser.service";
+import { ParserService, type ParsedSwap } from "./parser.service";
 import { CHAINS, type ChainKey } from "../config/chains";
 
 type ActiveWatcherSnapshot = {
@@ -25,6 +25,7 @@ export class ListenerService implements OnModuleInit, OnApplicationBootstrap, On
   private readonly logger = new Logger(ListenerService.name);
   private readonly providers = new Map<ChainKey, WebSocketProvider>();
   private readonly activeWatchers = new Map<string, ActiveWatcherSnapshot>();
+  private readonly tokenDecimalsCache = new Map<string, number>();
   private started = false;
 
   constructor(
@@ -249,6 +250,23 @@ export class ListenerService implements OnModuleInit, OnApplicationBootstrap, On
       return { hit: false, reason: "parse_skipped" };
     }
 
+    const minNotional = watcher.config.minSignalNotionalUsdt;
+    if (minNotional > 0) {
+      const usd = await this.estimateSwapNotionalUsd(provider, chainKey, parsed);
+      if (usd == null) {
+        this.logger.log(
+          `[${chainCfg.name}] watched tx skipped (notional unknown): ${txHash}`,
+        );
+        return { hit: false, reason: "notional_unknown" };
+      }
+      if (usd < minNotional) {
+        this.logger.log(
+          `[${chainCfg.name}] watched tx skipped (notional ${usd.toFixed(4)} USDT < min ${minNotional}): ${txHash}`,
+        );
+        return { hit: false, reason: "below_min_notional" };
+      }
+    }
+
     let price: number;
     try {
       price = await this.marketService.getLatestPriceByToken(parsed.token);
@@ -282,6 +300,51 @@ export class ListenerService implements OnModuleInit, OnApplicationBootstrap, On
         `handleSignal failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return { hit: false, reason: "handle_signal_failed" };
+    }
+  }
+
+  private async getTokenDecimals(
+    provider: WebSocketProvider,
+    chainKey: ChainKey,
+    tokenAddress: string,
+  ): Promise<number> {
+    const key = `${chainKey}:${tokenAddress.toLowerCase()}`;
+    const cached = this.tokenDecimalsCache.get(key);
+    if (cached !== undefined) return cached;
+    const erc20 = new Contract(
+      tokenAddress,
+      ["function decimals() view returns (uint8)"],
+      provider,
+    );
+    const d = Number(await erc20.decimals());
+    if (!Number.isFinite(d) || d < 0 || d > 36) {
+      throw new Error(`invalid decimals: ${d}`);
+    }
+    this.tokenDecimalsCache.set(key, d);
+    return d;
+  }
+
+  /** USD notional of the parsed swap leg (`amount` × price of `amountInToken` via Dexscreener). */
+  private async estimateSwapNotionalUsd(
+    provider: WebSocketProvider,
+    chainKey: ChainKey,
+    parsed: ParsedSwap,
+  ): Promise<number | null> {
+    try {
+      const token = getAddress(parsed.amountInToken);
+      const dec = await this.getTokenDecimals(provider, chainKey, token);
+      const raw = BigInt(parsed.amount);
+      if (raw < 0n) return null;
+      const human = Number(raw) / 10 ** dec;
+      if (!Number.isFinite(human) || human < 0) return null;
+      const px = await this.marketService.getLatestPriceByToken(token);
+      if (!Number.isFinite(px) || px <= 0) return null;
+      return human * px;
+    } catch (err) {
+      this.logger.debug(
+        `estimateSwapNotionalUsd: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
     }
   }
 

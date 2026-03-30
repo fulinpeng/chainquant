@@ -6,7 +6,10 @@ import type { TransactionReceipt } from "ethers";
 export type ParsedSwap = {
   token: string;
   type: "BUY" | "SELL";
+  /** Raw amount in smallest units of `amountInToken` (the swap leg used for notional). */
   amount: string;
+  /** ERC-20 (or wrapped native) that `amount` uses for decimals; may differ from `token` (e.g. BUY spends WETH). */
+  amountInToken: string;
 };
 
 @Injectable()
@@ -72,6 +75,7 @@ export class ParserService {
           token,
           type: isBuy ? "BUY" : "SELL",
           amount,
+          amountInToken: tokenIn,
         };
       } catch (err) {
         this.logger.warn(
@@ -168,18 +172,20 @@ export class ParserService {
     if (bestTokenOut) {
       const type = bestTokenOut === wrappedNative ? "SELL" : "BUY";
       return {
-        token: bestTokenOut,
+        token: getAddress(bestTokenOut),
         type,
         amount: bestValue.toString(),
+        amountInToken: getAddress(bestTokenOut),
       };
     }
 
     // Fallback for V4 USDC -> ETH style swap: no ERC20 to user, but unwrap exists.
     if (hasWethUnwrapToNative && userSentToken && userSentValue > 0n) {
       return {
-        token: userSentToken,
+        token: getAddress(userSentToken),
         type: "SELL",
         amount: userSentValue.toString(),
+        amountInToken: getAddress(userSentToken),
       };
     }
 

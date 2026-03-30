@@ -7,7 +7,7 @@ generator client {
   provider = "prisma-client-js"
 }
 
-/// 运行时配置 JSON，与 `EngineRuntimeConfig` 对齐。
+/// 运行时配置 JSON，与 `EngineRuntimeConfig` 对齐（含 minSignalNotionalUsdt 等字段）。
 model Watcher {
   id        String   @id @default(cuid())
   address   String

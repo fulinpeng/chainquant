@@ -12,6 +12,11 @@ export type EngineRuntimeConfig = {
   mode: "paper" | "live";
   maxTradeAmount: number;
   slippage: number;
+  /**
+   * 链上解析到的该笔 swap 名义价值（按 USD / USDT 计价）低于此值则忽略信号。
+   * `0` 表示不筛选。
+   */
+  minSignalNotionalUsdt: number;
 };
 
 export const DEFAULT_ENGINE_RUNTIME_CONFIG: EngineRuntimeConfig = {
@@ -23,6 +28,7 @@ export const DEFAULT_ENGINE_RUNTIME_CONFIG: EngineRuntimeConfig = {
   mode: "paper",
   maxTradeAmount: 0.01,
   slippage: 0.005,
+  minSignalNotionalUsdt: 0,
 };
 
 export type CopierSignalPayload = {
