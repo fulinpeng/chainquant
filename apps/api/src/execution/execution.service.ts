@@ -1,6 +1,14 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { CHAINS } from "../config/chains";
-import { Contract, JsonRpcProvider, Wallet, parseUnits } from "ethers";
+import {
+  Contract,
+  JsonRpcProvider,
+  Wallet,
+  parseUnits,
+  type TransactionLike,
+  type TransactionReceipt,
+  type TransactionResponse,
+} from "ethers";
 import { QuoterService } from "./quoter.service";
 
 type ExecuteParams = {
@@ -36,11 +44,33 @@ type ExecuteResult =
       };
     };
 
+/** 从 provider.getTransaction 得到的非空交易快照，用于同 nonce 替换。 */
+type OnChainTxSnapshot = NonNullable<Awaited<ReturnType<JsonRpcProvider["getTransaction"]>>>;
+
 @Injectable()
 export class ExecutionService {
   private readonly logger = new Logger(ExecutionService.name);
   private inFlight = false;
   constructor(private readonly quoterService: QuoterService) {}
+
+  /** 单笔交易处于 pending 的最长等待（毫秒），超时则尝试加价同 nonce 重发。 */
+  private getPendingTimeoutMs(): number {
+    const n = Number(process.env.EXEC_TX_PENDING_TIMEOUT_MS ?? "45000");
+    return Number.isFinite(n) && n >= 5000 ? Math.floor(n) : 45000;
+  }
+
+  /** 最多加价重发次数（不含首笔广播）。 */
+  private getMaxGasBumps(): number {
+    const n = Number(process.env.EXEC_TX_MAX_GAS_BUMPS ?? "4");
+    return Number.isFinite(n) && n >= 0 ? Math.min(20, Math.floor(n)) : 4;
+  }
+
+  /** 每次在现价基础上乘以 num/100，默认 115 = 1.15 倍。 */
+  private getGasBumpRatio(): { num: bigint; den: bigint } {
+    const parsed = parseInt(process.env.EXEC_TX_GAS_BUMP_NUM ?? "115", 10);
+    const n = Number.isFinite(parsed) && parsed >= 101 && parsed <= 200 ? parsed : 115;
+    return { num: BigInt(n), den: 100n };
+  }
 
   async execute(params: ExecuteParams): Promise<ExecuteResult> {
     if (this.inFlight) {
@@ -185,10 +215,7 @@ export class ExecutionService {
               ),
             3,
           );
-          await this.withRetryOn429(
-            () => this.withTimeout(approveTx.wait(), 30000, "approve_wait_timeout"),
-            3,
-          );
+          await this.waitUntilMinedWithGasBump(wallet, provider, approveTx, "approve");
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           throw new Error(`approve_failed:${msg}`);
@@ -196,20 +223,23 @@ export class ExecutionService {
       }
     }
 
-    let tx: { hash: string };
+    let swapTx: TransactionResponse;
     try {
-      tx = await this.withRetryOn429(
+      swapTx = await this.withRetryOn429(
         () =>
           this.withTimeout(
-            router.exactInputSingle({
-              tokenIn: input.tokenIn,
-              tokenOut: input.tokenOut,
-              fee: 3000,
-              recipient: wallet.address,
-              amountIn: amountInWei,
-              amountOutMinimum,
-              sqrtPriceLimitX96: 0,
-            }, isNativeInput ? { value: amountInWei } : undefined),
+            router.exactInputSingle(
+              {
+                tokenIn: input.tokenIn,
+                tokenOut: input.tokenOut,
+                fee: 3000,
+                recipient: wallet.address,
+                amountIn: amountInWei,
+                amountOutMinimum,
+                sqrtPriceLimitX96: 0,
+              },
+              isNativeInput ? { value: amountInWei } : undefined,
+            ),
             15000,
             "send_tx_timeout",
           ),
@@ -219,8 +249,14 @@ export class ExecutionService {
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(`send_tx_failed:${msg}`);
     }
+    const swapReceipt = await this.waitUntilMinedWithGasBump(
+      wallet,
+      provider,
+      swapTx,
+      "swap",
+    );
     return {
-      txHash: tx.hash as string,
+      txHash: swapReceipt.hash,
       debug: {
         amountIn: amountInWei.toString(),
         quoteAmountOut: quotedAmountOut.toString(),
@@ -228,6 +264,142 @@ export class ExecutionService {
         slippage: input.slippage,
       },
     };
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async buildGasBumpedReplacement(
+    provider: JsonRpcProvider,
+    tx: OnChainTxSnapshot,
+    num: bigint,
+    den: bigint,
+  ): Promise<TransactionLike<string>> {
+    const fee = await provider.getFeeData();
+    const to = tx.to;
+    if (to == null) {
+      throw new Error("replacement_requires_to");
+    }
+    const bump = (g: bigint) => (g * num) / den;
+    const maxB = (a: bigint, b: bigint) => (a > b ? a : b);
+
+    const base: TransactionLike<string> = {
+      to,
+      data: tx.data,
+      value: tx.value,
+      nonce: tx.nonce,
+      gasLimit: tx.gasLimit,
+      chainId: tx.chainId,
+    };
+
+    if (tx.maxFeePerGas != null && tx.maxPriorityFeePerGas != null) {
+      let mf = bump(tx.maxFeePerGas);
+      let mp = bump(tx.maxPriorityFeePerGas);
+      const nm = fee.maxFeePerGas ?? 0n;
+      const npc = fee.maxPriorityFeePerGas ?? 0n;
+      if (nm > 0n) mf = maxB(mf, bump(nm));
+      if (npc > 0n) mp = maxB(mp, bump(npc));
+      if (mp > mf) mp = mf;
+      return { ...base, type: 2, maxFeePerGas: mf, maxPriorityFeePerGas: mp };
+    }
+
+    if (tx.gasPrice != null && tx.gasPrice > 0n) {
+      let gp = bump(tx.gasPrice);
+      const ng = fee.gasPrice ?? 0n;
+      if (ng > 0n) gp = maxB(gp, bump(ng));
+      return { ...base, type: 0, gasPrice: gp };
+    }
+
+    if (fee.maxFeePerGas == null || fee.maxPriorityFeePerGas == null) {
+      throw new Error("fee_data_unavailable_for_replacement");
+    }
+    let mf2 = bump(fee.maxFeePerGas);
+    let mp2 = bump(fee.maxPriorityFeePerGas);
+    if (mp2 > mf2) mp2 = mf2;
+    return { ...base, type: 2, maxFeePerGas: mf2, maxPriorityFeePerGas: mp2 };
+  }
+
+  /**
+   * 等待交易上链；若在 EXEC_TX_PENDING_TIMEOUT_MS 内仍为 pending，则按更高 gas 同 nonce 重发，最多 EXEC_TX_MAX_GAS_BUMPS 次。
+   */
+  private async waitUntilMinedWithGasBump(
+    wallet: Wallet,
+    provider: JsonRpcProvider,
+    sent: TransactionResponse,
+    context: string,
+  ): Promise<TransactionReceipt> {
+    const pollMs = 2000;
+    const timeoutMs = this.getPendingTimeoutMs();
+    const maxBumps = this.getMaxGasBumps();
+    const { num, den } = this.getGasBumpRatio();
+
+    let snapshot: OnChainTxSnapshot | null = null;
+    for (let attempt = 0; attempt < 10 && snapshot == null; attempt++) {
+      snapshot = await provider.getTransaction(sent.hash);
+      if (snapshot == null) await this.sleep(250);
+    }
+    if (snapshot == null) {
+      throw new Error(`${context}_tx_not_found`);
+    }
+
+    let currentHash = sent.hash;
+
+    for (let round = 0; round <= maxBumps; round++) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const r = await provider.getTransactionReceipt(currentHash);
+        if (r) {
+          if (r.status === 0) {
+            throw new Error(`${context}_reverted`);
+          }
+          return r;
+        }
+        await this.sleep(pollMs);
+      }
+
+      const r2 = await provider.getTransactionReceipt(currentHash);
+      if (r2) {
+        if (r2.status === 0) {
+          throw new Error(`${context}_reverted`);
+        }
+        return r2;
+      }
+
+      if (round === maxBumps) {
+        throw new Error(`${context}_pending_timeout`);
+      }
+
+      const onChain = await provider.getTransaction(currentHash);
+      if (onChain) {
+        snapshot = onChain;
+      }
+      if (snapshot == null) {
+        throw new Error(`${context}_pending_lost_tx_meta`);
+      }
+
+      const replacement = await this.buildGasBumpedReplacement(provider, snapshot, num, den);
+      this.logger.warn(
+        `[${context}] pending ≥${timeoutMs}ms，同 nonce 加价重发 (${round + 1}/${maxBumps}) nonce=${snapshot.nonce}`,
+      );
+      const next = await this.withRetryOn429(
+        () =>
+          this.withTimeout(
+            wallet.sendTransaction(replacement),
+            20000,
+            `${context}_bump_send_timeout`,
+          ),
+        3,
+      );
+      currentHash = next.hash;
+      const fresh = await provider.getTransaction(currentHash);
+      if (fresh) {
+        snapshot = fresh;
+      }
+      await this.sleep(500);
+    }
+
+    throw new Error(`${context}_pending_timeout`);
   }
 
   private isAllowedPair(tokenIn: string, tokenOut: string): boolean {
