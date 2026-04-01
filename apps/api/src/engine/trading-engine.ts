@@ -24,6 +24,7 @@ import type { EventType } from "../domain/event";
 import { analyzeFvg } from "./fvg.util";
 import { parseUnits } from "ethers";
 import type { ExecuteResult } from "../execution/execution.service";
+import { computeAtrSimpleAvgHighLow } from "../trading/trading.service";
 
 function nowUnixSec(): number {
   return Math.floor(Date.now() / 1000);
@@ -524,6 +525,64 @@ export class TradingEngine {
     return Math.abs(impliedUsd - tokenUsd) / tokenUsd;
   }
 
+  /** 多单：max(当前止损, curPrice − ATR×k)；空单：min(当前止损, curPrice + ATR×k)。 */
+  private async maybeApplyAtrTrailingStop(
+    pos: Position,
+    livePrice: number,
+  ): Promise<Position | null> {
+    if (this.config.trailingStopMode !== "atr") {
+      return null;
+    }
+    const mult = this.config.trailingStopAtrMultiple;
+    const period = this.config.trailingStopAtrPeriod;
+    if (!Number.isFinite(mult) || mult <= 0 || !Number.isFinite(period) || period < 2) {
+      return null;
+    }
+    if (!Number.isFinite(livePrice) || livePrice <= 0) {
+      return null;
+    }
+    const limit = Math.min(120, Math.max(period + 5, 50));
+    let candles: MarketCandle[];
+    try {
+      candles = await this.marketService.getDexscreenerChartCandlesForArbitrum(
+        this.token,
+        limit,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`ATR trailing: chart fetch failed: ${msg}`);
+      return null;
+    }
+    const endIdx = candles.length - 1;
+    const atr = computeAtrSimpleAvgHighLow(candles, endIdx, period);
+    if (atr == null || !Number.isFinite(atr) || atr <= 0) {
+      return null;
+    }
+    const band = atr * mult;
+    let nextStop: number;
+    if (pos.side === "LONG") {
+      nextStop = Math.max(pos.stopLoss, livePrice - band);
+    } else {
+      nextStop = Math.min(pos.stopLoss, livePrice + band);
+    }
+    const scale = Math.max(1, Math.abs(pos.stopLoss));
+    if (Math.abs(nextStop - pos.stopLoss) <= 1e-12 * scale) {
+      return null;
+    }
+    return { ...pos, stopLoss: nextStop };
+  }
+
+  private syncOpenTradeStopLoss(newStop: number): void {
+    const trades = this.stateStore.getTrades();
+    for (let i = trades.length - 1; i >= 0; i--) {
+      const t = trades[i]!;
+      if (t.status === "OPEN" && t.token === this.token) {
+        this.stateStore.updateTrade(t.id, { stopLoss: newStop });
+        return;
+      }
+    }
+  }
+
   private enterInPositionAtPrice(
     entryPrice: number,
     sigType: "BUY" | "SELL",
@@ -776,10 +835,17 @@ export class TradingEngine {
           break;
         }
         case "IN_POSITION": {
-          const pos = this.stateStore.getPosition();
+          let pos = this.stateStore.getPosition();
           if (!pos) {
             this.state = "IDLE";
             break;
+          }
+
+          const trailed = await this.maybeApplyAtrTrailingStop(pos, livePrice);
+          if (trailed) {
+            this.stateStore.setPosition(trailed);
+            this.syncOpenTradeStopLoss(trailed.stopLoss);
+            pos = trailed;
           }
 
           if (pos.side === "LONG") {

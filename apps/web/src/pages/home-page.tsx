@@ -28,6 +28,9 @@ type WatcherItem = {
     /** 旧存盘；已并入 entryMode */
     fvgEnabled?: boolean;
     delayEntry?: boolean;
+    trailingStopMode?: "off" | "atr";
+    trailingStopAtrMultiple?: number;
+    trailingStopAtrPeriod?: number;
   };
   createdAt: number;
 };
@@ -79,6 +82,9 @@ export default function Home() {
     minSignalNotionalUsdt: "",
     entryMode: "pullback" as "immediate" | "delayed" | "pullback",
     entryTimeoutMinutes: "",
+    trailingStopMode: "off" as "off" | "atr",
+    trailingStopAtrMultiple: "",
+    trailingStopAtrPeriod: "",
   });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -241,9 +247,15 @@ export default function Home() {
 
   function formatEntryColumn(w: WatcherItem): string {
     const m = resolveEntryMode(w);
-    if (m === "immediate") return "立即";
-    if (m === "delayed") return "延时";
-    return `回调 ${Math.max(1, Math.round((w.config.entryTimeoutMs ?? 900_000) / 60_000))}m`;
+    let base: string;
+    if (m === "immediate") base = "立即";
+    else if (m === "delayed") base = "延时";
+    else base = `回调 ${Math.max(1, Math.round((w.config.entryTimeoutMs ?? 900_000) / 60_000))}m`;
+    if (w.config.trailingStopMode === "atr") {
+      const mult = w.config.trailingStopAtrMultiple ?? 3;
+      return `${base} ·ATR×${mult}`;
+    }
+    return base;
   }
 
   function openEdit(w: WatcherItem) {
@@ -264,6 +276,11 @@ export default function Home() {
       entryTimeoutMinutes: String(
         Math.max(1, Math.round(entryTimeoutMs / 60_000)),
       ),
+      trailingStopMode: w.config.trailingStopMode === "atr" ? "atr" : "off",
+      trailingStopAtrMultiple: String(
+        w.config.trailingStopAtrMultiple ?? 3,
+      ),
+      trailingStopAtrPeriod: String(w.config.trailingStopAtrPeriod ?? 14),
     });
   }
 
@@ -273,6 +290,14 @@ export default function Home() {
     const entryTimeoutMinutes = Number.isFinite(minsRaw)
       ? Math.max(1, Math.min(1440, Math.floor(minsRaw)))
       : 15;
+    const multRaw = Number(editConfig.trailingStopAtrMultiple);
+    const periodRaw = Number(editConfig.trailingStopAtrPeriod);
+    const trailingStopAtrMultiple = Number.isFinite(multRaw)
+      ? Math.max(0.5, Math.min(50, multRaw))
+      : 3;
+    const trailingStopAtrPeriod = Number.isFinite(periodRaw)
+      ? Math.max(2, Math.min(100, Math.floor(periodRaw)))
+      : 14;
     const payload = {
       riskPerTrade: Number(editConfig.riskPerTrade),
       stopLossPct: Number(editConfig.stopLossPct),
@@ -284,6 +309,9 @@ export default function Home() {
       minSignalNotionalUsdt: Number(editConfig.minSignalNotionalUsdt),
       entryMode: editConfig.entryMode,
       entryTimeoutMs: entryTimeoutMinutes * 60_000,
+      trailingStopMode: editConfig.trailingStopMode,
+      trailingStopAtrMultiple,
+      trailingStopAtrPeriod,
     };
     setError(null);
     try {
@@ -501,15 +529,18 @@ export default function Home() {
       </section>
       {editing && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-2xl backdrop-saturate-150"
           onClick={() => setEditing(null)}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-oo-border bg-oo-surface p-5 shadow-2xl"
+            className="flex max-h-[80vh] w-full  max-w-3xl flex-col overflow-hidden rounded-2xl border border-oo-border bg-oo-surface shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="mb-3 text-base font-semibold text-oo-text">Watcher Config</h3>
-            <div className="grid gap-2">
+            <h3 className="shrink-0 border-b border-oo-border px-5 py-4 text-base font-semibold text-oo-text">
+              Watcher Config
+            </h3>
+            <div className="watcher-config-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
+              <div className="grid gap-2">
               <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
                 <span>riskPerTrade</span>
                 <input
@@ -617,6 +648,66 @@ export default function Home() {
                   )}
                 </div>
               </label>
+              <label className="grid grid-cols-[120px_1fr] items-start gap-3 text-xs text-oo-text-muted">
+                <span className="pt-2">移动止损</span>
+                <div className="flex flex-col gap-2">
+                  <select
+                    value={editConfig.trailingStopMode}
+                    onChange={(e) =>
+                      setEditConfig((s) => ({
+                        ...s,
+                        trailingStopMode: e.target.value as "off" | "atr",
+                      }))
+                    }
+                    className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                  >
+                    <option value="off">关闭</option>
+                    <option value="atr">ATR 移动止损</option>
+                  </select>
+                  {editConfig.trailingStopMode === "atr" && (
+                    <>
+                      <label className="grid grid-cols-[auto_1fr] items-center gap-2 text-[11px] text-oo-text-muted">
+                        <span className="whitespace-nowrap">ATR 倍数</span>
+                        <input
+                          type="number"
+                          min={0.5}
+                          max={50}
+                          step={0.5}
+                          value={editConfig.trailingStopAtrMultiple}
+                          onChange={(e) =>
+                            setEditConfig((s) => ({
+                              ...s,
+                              trailingStopAtrMultiple: e.target.value,
+                            }))
+                          }
+                          className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                        />
+                      </label>
+                      <label className="grid grid-cols-[auto_1fr] items-center gap-2 text-[11px] text-oo-text-muted">
+                        <span className="whitespace-nowrap">ATR 周期（根）</span>
+                        <input
+                          type="number"
+                          min={2}
+                          max={100}
+                          value={editConfig.trailingStopAtrPeriod}
+                          onChange={(e) =>
+                            setEditConfig((s) => ({
+                              ...s,
+                              trailingStopAtrPeriod: e.target.value,
+                            }))
+                          }
+                          className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                        />
+                      </label>
+                      <span className="text-[11px] leading-snug text-oo-text-muted">
+                        按 Dexscreener 池 K 线计算 ATR（与回测里简化 ATR 一致：近 N 根 (high−low)
+                        均值）。多单：止损 = max(原止损, 现价 − ATR×倍数)；空单：止损 = min(原止损, 现价 +
+                        ATR×倍数)。
+                      </span>
+                    </>
+                  )}
+                </div>
+              </label>
               <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
                 <span>maxTradeAmount</span>
                 <input
@@ -657,8 +748,9 @@ export default function Home() {
                   </span>
                 </div>
               </label>
+              </div>
             </div>
-            <div className="mt-4 flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2 border-t border-oo-border bg-oo-surface px-5 py-4">
               <button
                 type="button"
                 onClick={() => void saveEditConfig()}
