@@ -285,7 +285,7 @@ export class ListenerService implements OnModuleInit, OnApplicationBootstrap, On
     }
 
     try {
-      this.engineManager.handleSignal(from, {
+      await this.engineManager.handleSignal(from, {
         type: parsed.type,
         token: parsed.token,
         price,

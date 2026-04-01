@@ -111,9 +111,9 @@ export class CopierController {
 
   @Post("signal")
   @HttpCode(HttpStatus.OK)
-  signal(@Body() body: CopierSignalBody & CopierEngineKeyBody) {
+  async signal(@Body() body: CopierSignalBody & CopierEngineKeyBody) {
     const { address, token } = resolveEngineKey(body);
-    return this.engineManager.handleSignal(address, {
+    return await this.engineManager.handleSignal(address, {
       type: body.type,
       token,
     });

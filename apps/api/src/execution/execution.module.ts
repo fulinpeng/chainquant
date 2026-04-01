@@ -4,7 +4,7 @@ import { QuoterService } from "./quoter.service";
 
 @Module({
   providers: [ExecutionService, QuoterService],
-  exports: [ExecutionService],
+  exports: [ExecutionService, QuoterService],
 })
 export class ExecutionModule {}
 

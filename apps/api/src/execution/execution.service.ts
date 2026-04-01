@@ -20,7 +20,7 @@ type ExecuteParams = {
   slippage: number;
 };
 
-type ExecuteResult =
+export type ExecuteResult =
   | {
       ok: true;
       mode: "paper" | "live";

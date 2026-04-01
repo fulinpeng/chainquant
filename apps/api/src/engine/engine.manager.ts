@@ -6,11 +6,13 @@ import {
 } from "@nestjs/common";
 import { MarketService } from "../market/market.service";
 import { ExecutionService } from "../execution/execution.service";
+import { QuoterService } from "../execution/quoter.service";
+import { FundsService } from "../risk/funds.service";
 import { DbSidecarService } from "../persistence/db-sidecar.service";
 import { watcherRepo } from "@chainquant/db";
 import { TradingEngine } from "./trading-engine";
 import type { CopierSignalPayload, EngineRuntimeConfig, OnSignalResult } from "./types";
-import { DEFAULT_ENGINE_RUNTIME_CONFIG } from "./types";
+import { coerceEntryMode, DEFAULT_ENGINE_RUNTIME_CONFIG } from "./types";
 import { ENGINE_TICK_MS } from "./types";
 import type { EngineStatusDto } from "./types";
 
@@ -25,6 +27,8 @@ export class EngineManager implements OnModuleDestroy {
   constructor(
     private readonly marketService: MarketService,
     private readonly executionService: ExecutionService,
+    private readonly quoterService: QuoterService,
+    private readonly fundsService: FundsService,
     private readonly dbSidecar: DbSidecarService,
   ) {}
 
@@ -52,6 +56,8 @@ export class EngineManager implements OnModuleDestroy {
       engine = new TradingEngine({
         marketService: this.marketService,
         executionService: this.executionService,
+        quoterService: this.quoterService,
+        fundsService: this.fundsService,
         address: a,
         token: t,
         config,
@@ -179,7 +185,7 @@ export class EngineManager implements OnModuleDestroy {
    * 将信号路由到 `address` + `signal.token` 对应的引擎。
    * 若载荷未带 `token`，则默认等于 `address`（单键 MVP）。
    */
-  handleSignal(
+  async handleSignal(
     address: string,
     signal: CopierSignalPayload & {
       token?: string;
@@ -187,7 +193,7 @@ export class EngineManager implements OnModuleDestroy {
       amount?: string;
       chain?: string;
     },
-  ): OnSignalResult {
+  ): Promise<OnSignalResult> {
     const a = address.trim();
     const token = (signal.token ?? a).trim();
     if (!a || !token) {
@@ -202,7 +208,7 @@ export class EngineManager implements OnModuleDestroy {
       engine.start();
       this.notifyEngineStarted();
     }
-    return engine.onSignal({
+    return await engine.onSignal({
       type: signal.type,
       price: signal.price,
       amount: signal.amount,
@@ -234,17 +240,21 @@ export class EngineManager implements OnModuleDestroy {
     const watcher = await watcherRepo.findByAddressAndChain(address, "arb");
     const watcherConfig =
       watcher?.config && typeof watcher.config === "object"
-        ? (watcher.config as Partial<EngineRuntimeConfig>)
+        ? (watcher.config as Partial<EngineRuntimeConfig> & {
+            fvgEnabled?: boolean;
+            delayEntry?: boolean;
+          })
         : null;
     const config: EngineRuntimeConfig = watcherConfig
       ? {
           ...DEFAULT_ENGINE_RUNTIME_CONFIG,
           ...watcherConfig,
           mode: watcherConfig.mode === "live" ? "live" : "paper",
+          entryMode: coerceEntryMode(watcherConfig),
         }
       : DEFAULT_ENGINE_RUNTIME_CONFIG;
 
-    return this.handleSignal(address, {
+    return await this.handleSignal(address, {
       type: "BUY",
       token,
       price,

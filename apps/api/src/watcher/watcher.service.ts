@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createEntityId } from "../domain/id";
 import type { EngineRuntimeConfig } from "../engine/types";
-import { DEFAULT_ENGINE_RUNTIME_CONFIG } from "../engine/types";
+import { coerceEntryMode, DEFAULT_ENGINE_RUNTIME_CONFIG } from "../engine/types";
 
 export type Watcher = {
   id: string;
@@ -268,7 +268,12 @@ export class WatcherService implements OnModuleInit {
     return "arb";
   }
 
-  private normalizeConfig(input: Partial<EngineRuntimeConfig>): EngineRuntimeConfig {
+  private normalizeConfig(
+    input: Partial<EngineRuntimeConfig> & {
+      fvgEnabled?: boolean;
+      delayEntry?: boolean;
+    },
+  ): EngineRuntimeConfig {
     const merged = { ...DEFAULT_ENGINE_RUNTIME_CONFIG, ...input };
     const riskPerTrade = this.numOrDefault(
       merged.riskPerTrade,
@@ -294,16 +299,26 @@ export class WatcherService implements OnModuleInit {
       merged.minSignalNotionalUsdt,
       DEFAULT_ENGINE_RUNTIME_CONFIG.minSignalNotionalUsdt,
     );
+    const entryTimeoutMsRaw = this.numOrDefault(
+      merged.entryTimeoutMs,
+      DEFAULT_ENGINE_RUNTIME_CONFIG.entryTimeoutMs,
+    );
+    const entryTimeoutMs = Math.max(
+      60_000,
+      Math.min(86_400_000, Math.floor(entryTimeoutMsRaw)),
+    );
+    const entryMode = coerceEntryMode(input);
     return {
       riskPerTrade: Math.min(1, Math.max(0, riskPerTrade)),
       stopLossPct: Math.max(0, stopLossPct),
       takeProfitPct: Math.max(0, takeProfitPct),
-      delayEntry: Boolean(merged.delayEntry),
       maxPositions: Math.max(1, Math.floor(this.numOrDefault(merged.maxPositions, DEFAULT_ENGINE_RUNTIME_CONFIG.maxPositions))),
       mode: merged.mode === "live" ? "live" : "paper",
       maxTradeAmount: Math.max(0, maxTradeAmount),
       slippage: Math.min(0.05, Math.max(0.0001, slippage)),
       minSignalNotionalUsdt: Math.max(0, minSignalNotionalUsdt),
+      entryTimeoutMs,
+      entryMode,
     };
   }
 

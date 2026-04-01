@@ -9,9 +9,11 @@ import { ListenerModule } from "./listener/listener.module";
 import { WatcherModule } from "./watcher/watcher.module";
 import { PersistenceModule } from "./persistence/persistence.module";
 import { QueryModule } from "./query/query.module";
+import { RiskModule } from "./risk/risk.module";
 
 @Module({
   imports: [
+    RiskModule,
     PersistenceModule,
     HealthModule,
     AuthModule,

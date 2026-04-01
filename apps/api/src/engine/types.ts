@@ -3,11 +3,18 @@ import type { Trade } from "../domain/trade";
 
 export type EngineMode = "MANUAL" | "AUTO";
 
+/**
+ * 入场模式：
+ * - immediate：验证通过后立即执行并在 tick 入场；
+ * - delayed：验证通过后仍走非 FVG 链路，但执行就绪后至少再等 1 个引擎 tick 再入场；
+ * - pullback：FVG 校验后等价格触达再执行（entryTimeoutMs）。
+ */
+export type EntryMode = "immediate" | "delayed" | "pullback";
+
 export type EngineRuntimeConfig = {
   riskPerTrade: number;
   stopLossPct: number;
   takeProfitPct: number;
-  delayEntry: boolean;
   maxPositions: number;
   mode: "paper" | "live";
   maxTradeAmount: number;
@@ -17,19 +24,43 @@ export type EngineRuntimeConfig = {
    * `0` 表示不筛选。
    */
   minSignalNotionalUsdt: number;
+  /** 回调入场模式下，挂单等待触价的最长时间（毫秒），默认 15 分钟 */
+  entryTimeoutMs: number;
+  entryMode: EntryMode;
 };
 
 export const DEFAULT_ENGINE_RUNTIME_CONFIG: EngineRuntimeConfig = {
   riskPerTrade: 0.01,
   stopLossPct: 0.0001, // 1/10000
   takeProfitPct: 0.0002, // 2/10000
-  delayEntry: false,
   maxPositions: 1,
   mode: "paper",
   maxTradeAmount: 0.01,
   slippage: 0.005,
   minSignalNotionalUsdt: 0,
+  entryTimeoutMs: 900_000,
+  entryMode: "pullback",
 };
+
+/** 兼容旧存盘：仅有 fvgEnabled / delayEntry 或 immediate+delayEntry 组合时推导 entryMode */
+export function coerceEntryMode(
+  input: Partial<EngineRuntimeConfig> & {
+    fvgEnabled?: boolean;
+    delayEntry?: boolean;
+  },
+): EntryMode {
+  const em = input.entryMode;
+  if (em === "delayed" || em === "pullback") {
+    return em;
+  }
+  if (em === "immediate") {
+    return input.delayEntry === true ? "delayed" : "immediate";
+  }
+  if (input.fvgEnabled === false) {
+    return input.delayEntry === true ? "delayed" : "immediate";
+  }
+  return DEFAULT_ENGINE_RUNTIME_CONFIG.entryMode;
+}
 
 export type CopierSignalPayload = {
   type: "BUY" | "SELL";

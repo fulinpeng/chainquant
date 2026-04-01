@@ -12,6 +12,7 @@ export type AddEngineEventInput = {
   timestamp?: number;
   price?: number;
   message?: string;
+  data?: Record<string, unknown>;
 };
 
 @Injectable()
@@ -61,6 +62,7 @@ export class StateStore {
       timestamp: input.timestamp ?? Date.now(),
       price: input.price,
       message: input.message,
+      data: input.data,
     };
     this.events.push(record);
     if (this.events.length > MAX_EVENTS) {

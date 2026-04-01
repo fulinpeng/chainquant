@@ -16,13 +16,18 @@ type WatcherItem = {
     riskPerTrade: number;
     stopLossPct: number;
     takeProfitPct: number;
-    delayEntry: boolean;
     maxPositions: number;
     mode: "paper" | "live";
     maxTradeAmount: number;
     slippage: number;
     /** 0 = 不筛选；链上 swap 名义(USD)须 ≥ 此值才跟单 */
     minSignalNotionalUsdt: number;
+    /** 立即 / 延时（晚 1 tick）/ 回调（FVG） */
+    entryMode?: "immediate" | "delayed" | "pullback";
+    entryTimeoutMs?: number;
+    /** 旧存盘；已并入 entryMode */
+    fvgEnabled?: boolean;
+    delayEntry?: boolean;
   };
   createdAt: number;
 };
@@ -67,12 +72,13 @@ export default function Home() {
     riskPerTrade: "",
     stopLossPct: "",
     takeProfitPct: "",
-    delayEntry: false,
     maxPositions: "",
     mode: "paper" as "paper" | "live",
     maxTradeAmount: "",
     slippage: "",
     minSignalNotionalUsdt: "",
+    entryMode: "pullback" as "immediate" | "delayed" | "pullback",
+    entryTimeoutMinutes: "",
   });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -219,13 +225,34 @@ export default function Home() {
     router.push(`/stats/${encodeURIComponent(w.address)}`);
   }
 
+  function resolveEntryMode(w: WatcherItem): "immediate" | "delayed" | "pullback" {
+    const c = w.config;
+    if (c.entryMode === "delayed" || c.entryMode === "pullback") {
+      return c.entryMode;
+    }
+    if (c.entryMode === "immediate") {
+      return c.delayEntry === true ? "delayed" : "immediate";
+    }
+    if (c.fvgEnabled === false) {
+      return c.delayEntry === true ? "delayed" : "immediate";
+    }
+    return "pullback";
+  }
+
+  function formatEntryColumn(w: WatcherItem): string {
+    const m = resolveEntryMode(w);
+    if (m === "immediate") return "立即";
+    if (m === "delayed") return "延时";
+    return `回调 ${Math.max(1, Math.round((w.config.entryTimeoutMs ?? 900_000) / 60_000))}m`;
+  }
+
   function openEdit(w: WatcherItem) {
     setEditing(w);
+    const entryTimeoutMs = w.config.entryTimeoutMs ?? 900_000;
     setEditConfig({
       riskPerTrade: String(w.config.riskPerTrade),
       stopLossPct: String(w.config.stopLossPct),
       takeProfitPct: String(w.config.takeProfitPct),
-      delayEntry: Boolean(w.config.delayEntry),
       maxPositions: String(w.config.maxPositions),
       mode: w.config.mode,
       maxTradeAmount: String(w.config.maxTradeAmount),
@@ -233,21 +260,30 @@ export default function Home() {
       minSignalNotionalUsdt: String(
         w.config.minSignalNotionalUsdt ?? 0,
       ),
+      entryMode: resolveEntryMode(w),
+      entryTimeoutMinutes: String(
+        Math.max(1, Math.round(entryTimeoutMs / 60_000)),
+      ),
     });
   }
 
   async function saveEditConfig() {
     if (!editing) return;
+    const minsRaw = Number(editConfig.entryTimeoutMinutes);
+    const entryTimeoutMinutes = Number.isFinite(minsRaw)
+      ? Math.max(1, Math.min(1440, Math.floor(minsRaw)))
+      : 15;
     const payload = {
       riskPerTrade: Number(editConfig.riskPerTrade),
       stopLossPct: Number(editConfig.stopLossPct),
       takeProfitPct: Number(editConfig.takeProfitPct),
-      delayEntry: Boolean(editConfig.delayEntry),
       maxPositions: Number(editConfig.maxPositions),
       mode: editConfig.mode,
       maxTradeAmount: Number(editConfig.maxTradeAmount),
       slippage: Number(editConfig.slippage),
       minSignalNotionalUsdt: Number(editConfig.minSignalNotionalUsdt),
+      entryMode: editConfig.entryMode,
+      entryTimeoutMs: entryTimeoutMinutes * 60_000,
     };
     setError(null);
     try {
@@ -352,6 +388,7 @@ export default function Home() {
                 <th className="px-3 py-2 font-medium">riskPerTrade</th>
                 <th className="px-3 py-2 font-medium">stopLoss</th>
                 <th className="px-3 py-2 font-medium">takeProfit</th>
+                <th className="px-3 py-2 font-medium">入场</th>
                 <th className="px-3 py-2 font-medium">createdAt</th>
                 <th className="px-3 py-2 font-medium">action</th>
               </tr>
@@ -359,7 +396,7 @@ export default function Home() {
             <tbody className="divide-y divide-oo-border text-oo-text-secondary">
               {watcherList.length === 0 ? (
                 <tr>
-                  <td className="px-3 py-4 text-oo-text-muted" colSpan={7}>
+                  <td className="px-3 py-4 text-oo-text-muted" colSpan={8}>
                     暂无 Watcher；请先添加 address。
                   </td>
                 </tr>
@@ -395,6 +432,9 @@ export default function Home() {
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-oo-text">
                       {w.config.takeProfitPct}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-oo-text-secondary">
+                      {formatEntryColumn(w)}
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-oo-text">
                       {fmtTime(w.createdAt)}
@@ -526,6 +566,57 @@ export default function Home() {
                   <option value="live">live</option>
                 </select>
               </label>
+              <label className="grid grid-cols-[120px_1fr] items-start gap-3 text-xs text-oo-text-muted">
+                <span className="pt-2">入场模式</span>
+                <div className="flex flex-col gap-2">
+                  <select
+                    value={editConfig.entryMode}
+                    onChange={(e) =>
+                      setEditConfig((s) => ({
+                        ...s,
+                        entryMode: e.target.value as
+                          | "immediate"
+                          | "delayed"
+                          | "pullback",
+                      }))
+                    }
+                    className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                  >
+                    <option value="immediate">立即入场</option>
+                    <option value="delayed">延时入场</option>
+                    <option value="pullback">回调入场（FVG 回踩）</option>
+                  </select>
+                  {editConfig.entryMode === "delayed" && (
+                    <span className="text-[11px] leading-snug text-oo-text-muted">
+                      验证通过后走非 FVG 链路；执行就绪后至少再等 1 个引擎 tick 再按市价记开仓。
+                    </span>
+                  )}
+                  {editConfig.entryMode === "pullback" && (
+                    <label className="grid grid-cols-[auto_1fr] items-center gap-2 text-[11px] text-oo-text-muted">
+                      <span className="whitespace-nowrap">挂单超时（分钟）</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={1440}
+                        value={editConfig.entryTimeoutMinutes}
+                        onChange={(e) =>
+                          setEditConfig((s) => ({
+                            ...s,
+                            entryTimeoutMinutes: e.target.value,
+                          }))
+                        }
+                        className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                      />
+                    </label>
+                  )}
+                  {editConfig.entryMode === "pullback" && (
+                    <span className="text-[11px] leading-snug text-oo-text-muted">
+                      验证通过后做 FVG 校验，在区间内等待价格触达再下单；超时未触价则放弃本次并释放预占资金。范围
+                      1–1440 分钟。
+                    </span>
+                  )}
+                </div>
+              </label>
               <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
                 <span>maxTradeAmount</span>
                 <input
@@ -565,16 +656,6 @@ export default function Home() {
                     表示不限制。
                   </span>
                 </div>
-              </label>
-              <label className="flex items-center gap-2 text-sm text-oo-text-secondary">
-                <input
-                  type="checkbox"
-                  checked={editConfig.delayEntry}
-                  onChange={(e) =>
-                    setEditConfig((s) => ({ ...s, delayEntry: e.target.checked }))
-                  }
-                />
-                delayEntry
               </label>
             </div>
             <div className="mt-4 flex items-center gap-2">

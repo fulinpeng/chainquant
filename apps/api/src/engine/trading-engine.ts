@@ -3,6 +3,8 @@ import { CHAINS } from "../config/chains";
 import type { MarketCandle } from "../market/market.service";
 import { MarketService } from "../market/market.service";
 import { ExecutionService } from "../execution/execution.service";
+import { QuoterService } from "../execution/quoter.service";
+import { FundsService } from "../risk/funds.service";
 import { createEntityId } from "../domain/id";
 import type { Position } from "../domain/position";
 import type { Signal as DomainSignal } from "../domain/signal";
@@ -18,6 +20,10 @@ import type {
   OnSignalResult,
 } from "./types";
 import { COOLDOWN_CANDLES } from "./types";
+import type { EventType } from "../domain/event";
+import { analyzeFvg } from "./fvg.util";
+import { parseUnits } from "ethers";
+import type { ExecuteResult } from "../execution/execution.service";
 
 function nowUnixSec(): number {
   return Math.floor(Date.now() / 1000);
@@ -45,9 +51,21 @@ export class TradingEngine {
   private executionReady = false;
   private executionFailReason: string | null = null;
 
+  /** FVG 挂单等待（有预占资金，未发 execution） */
+  private pendingOrder?: {
+    entryPrice: number;
+    direction: "BUY" | "SELL";
+    amountIn: number;
+    expireAt: number;
+  };
+  private pendingExecutionSignal?: CopierSignalPayload;
+  private reservationActive: { amount: number } | null = null;
+
   constructor({
     marketService,
     executionService,
+    quoterService,
+    fundsService,
     address,
     token,
     config,
@@ -55,6 +73,8 @@ export class TradingEngine {
   }: {
     marketService: MarketService;
     executionService: ExecutionService;
+    quoterService: QuoterService;
+    fundsService: FundsService;
     address: string;
     token: string;
     config: EngineRuntimeConfig;
@@ -62,6 +82,8 @@ export class TradingEngine {
   }) {
     this.marketService = marketService;
     this.executionService = executionService;
+    this.quoterService = quoterService;
+    this.fundsService = fundsService;
     this.address = address;
     this.token = token;
     this.config = config;
@@ -70,6 +92,8 @@ export class TradingEngine {
   }
   private readonly marketService: MarketService;
   private readonly executionService: ExecutionService;
+  private readonly quoterService: QuoterService;
+  private readonly fundsService: FundsService;
   private readonly dbHooks?: EngineDbHooks;
   public readonly address: string;
   public readonly token: string;
@@ -108,6 +132,9 @@ export class TradingEngine {
     this.executionPending = false;
     this.executionReady = false;
     this.executionFailReason = null;
+    this.pendingOrder = undefined;
+    this.pendingExecutionSignal = undefined;
+    this.reservationActive = null;
     this.stateStore.resetTradingState();
 
     this.running = true;
@@ -117,9 +144,11 @@ export class TradingEngine {
   async stop(): Promise<{ ok: true }> {
     this.running = false;
     this.stateStore.setSignal(null);
+    this.clearFvgPending();
     if (this.state === "WAITING_ENTRY") {
       this.state = "IDLE";
     }
+    this.releaseReservationTracked();
     this.stateStore.addEvent({
       type: "ERROR",
       message: "Engine stop requested",
@@ -128,7 +157,7 @@ export class TradingEngine {
     return { ok: true };
   }
 
-  onSignal(signal: CopierSignalPayload): OnSignalResult {
+  async onSignal(signal: CopierSignalPayload): Promise<OnSignalResult> {
     if (!this.running) {
       throw new BadRequestException("Engine is not running");
     }
@@ -137,18 +166,12 @@ export class TradingEngine {
     }
 
     if (this.state !== "IDLE") {
-      this.stateStore.addEvent({
-        type: "INVALID_SIGNAL",
-        message: "Signal ignored due to state",
-      });
+      this.emitEv("INVALID_SIGNAL", "Signal ignored due to state");
       return { ok: true, ignored: true };
     }
 
     if (this.config.maxPositions < 1) {
-      this.stateStore.addEvent({
-        type: "INVALID_SIGNAL",
-        message: "Signal ignored due to maxPositions < 1",
-      });
+      this.emitEv("INVALID_SIGNAL", "Signal ignored due to maxPositions < 1");
       return { ok: true, ignored: true };
     }
 
@@ -157,13 +180,168 @@ export class TradingEngine {
       this.tickCount - this.lastExitTick < COOLDOWN_CANDLES
     ) {
       const need = COOLDOWN_CANDLES - (this.tickCount - this.lastExitTick);
-      this.stateStore.addEvent({
-        type: "COOLDOWN_BLOCK",
-        message: `Cooldown active; need ~${need} more tick(s) (cooldown=${COOLDOWN_CANDLES})`,
+      this.emitEv(
+        "COOLDOWN_BLOCK",
+        `Cooldown active; need ~${need} more tick(s) (cooldown=${COOLDOWN_CANDLES})`,
+      );
+      return { ok: true, ignored: true };
+    }
+
+    const reserveAmount = this.config.maxTradeAmount;
+    if (!Number.isFinite(reserveAmount) || reserveAmount <= 0) {
+      this.emitEv("RESERVATION_FAILED", "maxTradeAmount invalid", {
+        reason: "invalid_max_trade_amount",
       });
       return { ok: true, ignored: true };
     }
 
+    const okReserve = this.fundsService.reserve(
+      this.address,
+      reserveAmount,
+      this.account.balance,
+    );
+    if (!okReserve) {
+      this.emitEv("RESERVATION_FAILED", "Insufficient balance for reservation", {
+        address: this.address,
+        amount: reserveAmount,
+        balance: this.account.balance,
+        reserved: this.fundsService.getReserved(this.address),
+      });
+      return { ok: true, ignored: true };
+    }
+    this.reservationActive = { amount: reserveAmount };
+
+    if (this.config.entryMode !== "pullback") {
+      return this.onSignalLegacyAfterReserve(signal, reserveAmount);
+    }
+
+    try {
+      const candles = await this.marketService.getDexscreenerChartCandlesForArbitrum(
+        this.token,
+        20,
+      );
+      const fvg = analyzeFvg(candles, signal.type);
+      if (fvg.count < 2 || fvg.latestMid == null) {
+        this.releaseReservationTracked();
+        this.emitEv("FVG_REJECTED", "FVG count < 2 or no mid", {
+          count: fvg.count,
+          direction: signal.type,
+        });
+        return { ok: true, ignored: true };
+      }
+
+      const entryPrice = fvg.latestMid;
+      const tokenUsd = await this.marketService.getLatestPriceByToken(this.token);
+      this.currentPrice = tokenUsd;
+
+      let devQuotePct: number;
+      try {
+        devQuotePct = await this.computeQuoteVsDexDeviationPct(tokenUsd, signal.type);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.releaseReservationTracked();
+        this.emitEv("FVG_REJECTED", `quote check failed: ${msg}`, { reason: "quote_failed" });
+        return { ok: true, ignored: true };
+      }
+      if (devQuotePct > 0.02) {
+        this.releaseReservationTracked();
+        this.emitEv("FVG_REJECTED", "Dex vs quoter deviation > 2%", {
+          deviationPct: devQuotePct,
+        });
+        return { ok: true, ignored: true };
+      }
+
+      const devEntryPct = Math.abs(entryPrice - tokenUsd) / tokenUsd;
+      if (devEntryPct > 0.05) {
+        this.releaseReservationTracked();
+        this.emitEv("FVG_REJECTED", "entryPrice vs spot deviation > 5%", {
+          deviationPct: devEntryPct,
+          entryPrice,
+          spot: tokenUsd,
+        });
+        return { ok: true, ignored: true };
+      }
+
+      const immediate =
+        signal.type === "BUY"
+          ? tokenUsd <= entryPrice
+          : tokenUsd >= entryPrice;
+
+      const domainSignal: DomainSignal = {
+        id: createEntityId(),
+        token: this.token,
+        type: signal.type,
+        price: signal.price ?? tokenUsd,
+        createdAt: Date.now(),
+      };
+
+      if (immediate) {
+        this.emitEv("ORDER_TRIGGERED", "Immediate FVG entry", {
+          entryPrice,
+          spot: tokenUsd,
+          direction: signal.type,
+        });
+        try {
+          this.executionPending = true;
+          this.executionReady = false;
+          this.executionFailReason = null;
+          const result = await this.runExecution(signal);
+          this.applyExecutionResult(result, signal);
+          const canEnter = this.canEnterFromExecutionResult(result);
+          if (canEnter) {
+            this.enterInPositionAtPrice(tokenUsd, signal.type, nowUnixSec());
+            this.stateStore.setSignal(null);
+            this.pendingSignalTick = null;
+          } else {
+            this.stateStore.setSignal(null);
+            this.pendingSignalTick = null;
+            this.state = "IDLE";
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.emitEv("ERROR", `FVG immediate execution crashed: ${msg}`);
+          this.state = "IDLE";
+          this.stateStore.setSignal(null);
+          this.pendingSignalTick = null;
+        } finally {
+          this.executionPending = false;
+          this.releaseReservationTracked();
+        }
+        this.stateStore.addEvent({ type: "SIGNAL", message: signal.type });
+        return { ok: true };
+      }
+
+      this.pendingOrder = {
+        entryPrice,
+        direction: signal.type,
+        amountIn: reserveAmount,
+        expireAt: Date.now() + this.config.entryTimeoutMs,
+      };
+      this.pendingExecutionSignal = { ...signal };
+      this.stateStore.setSignal(domainSignal);
+      this.state = "WAITING_ENTRY";
+      this.pendingSignalTick = this.tickCount;
+      this.emitEv("ORDER_PLACED", "FVG limit wait", {
+        entryPrice,
+        expireAt: this.pendingOrder.expireAt,
+        direction: signal.type,
+        amountIn: reserveAmount,
+      });
+      this.stateStore.addEvent({ type: "SIGNAL", message: signal.type });
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.releaseReservationTracked();
+      this.emitEv("FVG_REJECTED", msg, { phase: "fvg_pipeline" });
+      return { ok: true, ignored: true };
+    }
+  }
+
+  /** 原逻辑：预占成功后立即发起 execution，WAITING_ENTRY 等成交再在 tick 入场。 */
+  private onSignalLegacyAfterReserve(
+    signal: CopierSignalPayload,
+    _reserveAmount: number,
+  ): OnSignalResult {
     const domainSignal: DomainSignal = {
       id: createEntityId(),
       token: this.token,
@@ -171,91 +349,15 @@ export class TradingEngine {
       price: signal.price ?? this.currentPrice ?? 0,
       createdAt: Date.now(),
     };
-    this.triggerExecution(signal);
     this.executionPending = true;
     this.executionReady = false;
     this.executionFailReason = null;
-    this.stateStore.setSignal(domainSignal);
-    this.state = "WAITING_ENTRY";
-    this.pendingSignalTick = this.tickCount;
-    this.stateStore.addEvent({
-      type: "SIGNAL",
-      message: signal.type,
-    });
-
-    return { ok: true };
-  }
-
-  private triggerExecution(signal: CopierSignalPayload): void {
-    const wrapped = CHAINS.arb.wrappedNative.address;
-    const tokenIn = signal.type === "BUY" ? wrapped : this.token;
-    const tokenOut = signal.type === "BUY" ? this.token : wrapped;
-    void this.executionService
-      .execute({
-        mode: this.config.mode,
-        tokenIn,
-        tokenOut,
-        amountInRaw: signal.amount,
-        maxTradeAmount: this.config.maxTradeAmount,
-        slippage: this.config.slippage,
-      })
+    void this.runExecution(signal)
       .then((result) => {
-        const execData: Record<string, unknown> = !result.ok
-          ? { reason: result.reason }
-          : result.debug
-            ? {
-                amountIn: result.debug.amountIn,
-                amountOut: result.debug.quoteAmountOut,
-                minOut: result.debug.minOut,
-                slippage: result.debug.slippage,
-              }
-            : { mode: result.mode };
-        const canEnterPosition =
-          result.ok && (result.mode === "paper" || (result.mode === "live" && Boolean(result.txHash)));
-        const liveWithoutTxHash = result.ok && result.mode === "live" && !result.txHash;
-        void this.dbHooks?.onExecutionEvent?.({
-          ok: canEnterPosition,
-          mode: result.mode,
-          reason: canEnterPosition
-            ? undefined
-            : liveWithoutTxHash
-              ? "live_tx_missing"
-              : !result.ok
-                ? result.reason
-                : undefined,
-          txHash:
-            result.mode === "live" && result.ok && result.txHash ? result.txHash : undefined,
-          data: execData,
-        });
-        if (!canEnterPosition) {
-          this.executionPending = false;
-          this.executionReady = false;
-          this.executionFailReason = liveWithoutTxHash
-            ? "live_tx_missing"
-            : !result.ok
-              ? result.reason
-              : "unknown";
-          this.stateStore.addEvent({
-            type: "ERROR",
-            message: liveWithoutTxHash
-              ? "Execution failed: live_tx_missing"
-              : !result.ok
-                ? `Execution failed: ${result.reason}`
-                : "Execution failed: unknown",
-          });
-          return;
-        }
-        this.executionPending = false;
-        this.executionReady = true;
-        this.executionFailReason = null;
-        if (result.mode === "live" && result.txHash) {
-          const quoteInfo = result.debug
-            ? `amountIn=${result.debug.amountIn} quoteOut=${result.debug.quoteAmountOut} minOut=${result.debug.minOut} slippage=${result.debug.slippage}`
-            : "quote=na";
-          this.stateStore.addEvent({
-            type: "EXECUTION",
-            message: `Live tx sent: ${result.txHash} | ${quoteInfo}`,
-          });
+        try {
+          this.applyExecutionResult(result, signal);
+        } finally {
+          this.releaseReservationTracked();
         }
       })
       .catch((err) => {
@@ -263,17 +365,233 @@ export class TradingEngine {
         this.executionPending = false;
         this.executionReady = false;
         this.executionFailReason = msg;
+        this.releaseReservationTracked();
         void this.dbHooks?.onExecutionEvent?.({
           ok: false,
           mode: "live",
           reason: msg,
           data: { reason: msg },
         });
-        this.stateStore.addEvent({
-          type: "ERROR",
-          message: `Execution crashed: ${msg}`,
-        });
+        this.emitEv("ERROR", `Execution crashed: ${msg}`);
       });
+    this.stateStore.setSignal(domainSignal);
+    this.state = "WAITING_ENTRY";
+    this.pendingSignalTick = this.tickCount;
+    this.stateStore.addEvent({ type: "SIGNAL", message: signal.type });
+    return { ok: true };
+  }
+
+  private emitEv(
+    type: EventType,
+    message: string,
+    data?: Record<string, unknown>,
+    price?: number,
+  ): void {
+    this.stateStore.addEvent({ type, message, data, price });
+  }
+
+  private releaseReservationTracked(): void {
+    if (this.reservationActive) {
+      this.fundsService.release(this.address, this.reservationActive.amount);
+      this.reservationActive = null;
+    }
+  }
+
+  private clearFvgPending(): void {
+    this.pendingOrder = undefined;
+    this.pendingExecutionSignal = undefined;
+  }
+
+  private async runExecution(signal: CopierSignalPayload): Promise<ExecuteResult> {
+    const wrapped = CHAINS.arb.wrappedNative.address;
+    const tokenIn = signal.type === "BUY" ? wrapped : this.token;
+    const tokenOut = signal.type === "BUY" ? this.token : wrapped;
+    return this.executionService.execute({
+      mode: this.config.mode,
+      tokenIn,
+      tokenOut,
+      amountInRaw: signal.amount,
+      maxTradeAmount: this.config.maxTradeAmount,
+      slippage: this.config.slippage,
+    });
+  }
+
+  private canEnterFromExecutionResult(result: ExecuteResult): boolean {
+    return (
+      result.ok &&
+      (result.mode === "paper" || (result.mode === "live" && Boolean(result.txHash)))
+    );
+  }
+
+  private applyExecutionResult(
+    result: ExecuteResult,
+    signal: CopierSignalPayload,
+  ): void {
+    const execData: Record<string, unknown> = !result.ok
+      ? { reason: result.reason }
+      : result.debug
+        ? {
+            amountIn: result.debug.amountIn,
+            amountOut: result.debug.quoteAmountOut,
+            minOut: result.debug.minOut,
+            slippage: result.debug.slippage,
+          }
+        : { mode: result.mode };
+    const canEnterPosition = this.canEnterFromExecutionResult(result);
+    const liveWithoutTxHash = result.ok && result.mode === "live" && !result.txHash;
+    void this.dbHooks?.onExecutionEvent?.({
+      ok: canEnterPosition,
+      mode: result.mode,
+      reason: canEnterPosition
+        ? undefined
+        : liveWithoutTxHash
+          ? "live_tx_missing"
+          : !result.ok
+            ? result.reason
+            : undefined,
+      txHash:
+        result.mode === "live" && result.ok && result.txHash ? result.txHash : undefined,
+      data: execData,
+    });
+    if (!canEnterPosition) {
+      this.executionPending = false;
+      this.executionReady = false;
+      this.executionFailReason = liveWithoutTxHash
+        ? "live_tx_missing"
+        : !result.ok
+          ? result.reason
+          : "unknown";
+      this.emitEv(
+        "ERROR",
+        liveWithoutTxHash
+          ? "Execution failed: live_tx_missing"
+          : !result.ok
+            ? `Execution failed: ${result.reason}`
+            : "Execution failed: unknown",
+      );
+      return;
+    }
+    this.executionPending = false;
+    this.executionReady = true;
+    this.executionFailReason = null;
+    if (result.ok && result.mode === "live" && result.txHash) {
+      const quoteInfo = result.debug
+        ? `amountIn=${result.debug.amountIn} quoteOut=${result.debug.quoteAmountOut} minOut=${result.debug.minOut} slippage=${result.debug.slippage}`
+        : "quote=na";
+      this.emitEv("EXECUTION", `Live tx sent: ${result.txHash} | ${quoteInfo}`);
+    }
+  }
+
+  /** Quoter 隐含 USD/代币 vs Dexscreener spot 的相对偏差（0–1）。 */
+  private async computeQuoteVsDexDeviationPct(
+    tokenUsd: number,
+    direction: "BUY" | "SELL",
+  ): Promise<number> {
+    if (!Number.isFinite(tokenUsd) || tokenUsd <= 0) {
+      throw new Error("invalid_token_usd");
+    }
+    const wrapped = CHAINS.arb.wrappedNative.address;
+    const dec = await this.marketService.getErc20Decimals(this.token);
+    const ethUsd = await this.marketService.getLatestPrice();
+    const fee = 3000;
+
+    if (direction === "BUY") {
+      const probe = 10n ** 15n;
+      const out = await this.quoterService.quoteExactInputSingle({
+        tokenIn: wrapped,
+        tokenOut: this.token,
+        fee,
+        amountIn: probe,
+      });
+      const ethSpent = Number(probe) / 1e18;
+      const tok = Number(out) / 10 ** dec;
+      if (tok <= 0) throw new Error("quote_zero_out");
+      const impliedUsd = (ethSpent * ethUsd) / tok;
+      return Math.abs(impliedUsd - tokenUsd) / tokenUsd;
+    }
+
+    const probeTok = parseUnits("0.001", dec);
+    const outWeth = await this.quoterService.quoteExactInputSingle({
+      tokenIn: this.token,
+      tokenOut: wrapped,
+      fee,
+      amountIn: probeTok,
+    });
+    const tokHuman = Number(probeTok) / 10 ** dec;
+    const wethOut = Number(outWeth) / 1e18;
+    if (tokHuman <= 0) throw new Error("invalid_probe");
+    const impliedUsd = (wethOut * ethUsd) / tokHuman;
+    return Math.abs(impliedUsd - tokenUsd) / tokenUsd;
+  }
+
+  private enterInPositionAtPrice(
+    entryPrice: number,
+    sigType: "BUY" | "SELL",
+    tSec: number,
+  ): void {
+    if (sigType === "BUY") {
+      const stopLoss = entryPrice * (1 - this.config.stopLossPct);
+      const takeProfit = entryPrice * (1 + this.config.takeProfitPct);
+      const size = this.computePositionSize(entryPrice, stopLoss);
+      this.stateStore.setPosition({
+        id: createEntityId(),
+        token: this.token,
+        side: "LONG",
+        entryTime: tSec,
+        entryPrice,
+        size,
+        stopLoss,
+        takeProfit,
+        status: "OPEN",
+      });
+    } else {
+      const stopLoss = entryPrice * (1 + this.config.stopLossPct);
+      const takeProfit = entryPrice * (1 - this.config.takeProfitPct);
+      const size = this.computePositionSize(entryPrice, stopLoss);
+      this.stateStore.setPosition({
+        id: createEntityId(),
+        token: this.token,
+        side: "SHORT",
+        entryTime: tSec,
+        entryPrice,
+        size,
+        stopLoss,
+        takeProfit,
+        status: "OPEN",
+      });
+    }
+
+    const opened = this.stateStore.getPosition();
+    this.emitEv("ENTRY", `${sigType} @ ${entryPrice}`, { side: opened?.side }, entryPrice);
+    if (opened) {
+      const tradeId = createEntityId();
+      this.stateStore.addTrade({
+        id: tradeId,
+        token: opened.token,
+        side: opened.side,
+        entryTime: opened.entryTime,
+        entryPrice: opened.entryPrice,
+        size: opened.size,
+        exitTime: null,
+        exitPrice: null,
+        stopLoss: opened.stopLoss,
+        takeProfit: opened.takeProfit,
+        pnl: null,
+        status: "OPEN",
+      });
+      void this.dbHooks?.onTradeOpen?.({
+        tradeId,
+        address: this.address,
+        token: this.token,
+        side: opened.side,
+        size: opened.size,
+        entryPrice: opened.entryPrice,
+      });
+    }
+    this.executionPending = false;
+    this.executionReady = false;
+    this.executionFailReason = null;
+    this.state = "IN_POSITION";
   }
 
   /** 单次调度：拉取价格并推进状态机一步。 */
@@ -282,14 +600,11 @@ export class TradingEngine {
 
     let livePrice: number;
     try {
-      livePrice = await this.marketService.getLatestPrice();
+      livePrice = await this.marketService.getLatestPriceByToken(this.token);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`getLatestPrice failed: ${msg}`);
-      this.stateStore.addEvent({
-        type: "ERROR",
-        message: msg,
-      });
+      this.logger.warn(`getLatestPriceByToken failed: ${msg}`);
+      this.emitEv("ERROR", msg);
       this.lastUpdateTime = Date.now();
       return;
     }
@@ -307,6 +622,62 @@ export class TradingEngine {
           break;
         }
         case "WAITING_ENTRY": {
+          if (this.pendingOrder && this.pendingExecutionSignal) {
+            if (Date.now() > this.pendingOrder.expireAt) {
+              const ep = this.pendingOrder.entryPrice;
+              this.releaseReservationTracked();
+              this.clearFvgPending();
+              this.stateStore.setSignal(null);
+              this.pendingSignalTick = null;
+              this.state = "IDLE";
+              this.emitEv("ORDER_EXPIRED", "FVG pending order timeout", {
+                entryPrice: ep,
+              });
+              break;
+            }
+
+            const { entryPrice, direction } = this.pendingOrder;
+            const hit =
+              direction === "BUY"
+                ? livePrice <= entryPrice
+                : livePrice >= entryPrice;
+            if (!hit) {
+              break;
+            }
+
+            this.emitEv("ORDER_TRIGGERED", "Price touched FVG entry (wait path)", {
+              entryPrice,
+              spot: livePrice,
+              direction,
+            });
+
+            const sig = this.pendingExecutionSignal;
+            this.clearFvgPending();
+            this.stateStore.setSignal(null);
+            this.pendingSignalTick = null;
+
+            try {
+              this.executionPending = true;
+              this.executionReady = false;
+              this.executionFailReason = null;
+              const result = await this.runExecution(sig);
+              this.applyExecutionResult(result, sig);
+              if (this.canEnterFromExecutionResult(result)) {
+                this.enterInPositionAtPrice(livePrice, sig.type, tSec);
+              } else {
+                this.state = "IDLE";
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              this.emitEv("ERROR", `FVG wait execution crashed: ${msg}`);
+              this.state = "IDLE";
+            } finally {
+              this.executionPending = false;
+              this.releaseReservationTracked();
+            }
+            break;
+          }
+
           const pendingSignal = this.stateStore.getSignal();
           if (!pendingSignal) {
             this.state = "IDLE";
@@ -327,41 +698,41 @@ export class TradingEngine {
             break;
           }
           if (
-            this.config.delayEntry &&
+            this.config.entryMode === "delayed" &&
             this.pendingSignalTick !== null &&
             this.tickCount <= this.pendingSignalTick
           ) {
             break;
           }
 
-          const entryPrice = livePrice;
+          const entryPx = livePrice;
           const sig = pendingSignal;
 
           if (sig.type === "BUY") {
-            const stopLoss = entryPrice * (1 - this.config.stopLossPct);
-            const takeProfit = entryPrice * (1 + this.config.takeProfitPct);
-            const size = this.computePositionSize(entryPrice, stopLoss);
+            const stopLoss = entryPx * (1 - this.config.stopLossPct);
+            const takeProfit = entryPx * (1 + this.config.takeProfitPct);
+            const size = this.computePositionSize(entryPx, stopLoss);
             this.stateStore.setPosition({
               id: createEntityId(),
               token: this.token,
               side: "LONG",
               entryTime: tSec,
-              entryPrice,
+              entryPrice: entryPx,
               size,
               stopLoss,
               takeProfit,
               status: "OPEN",
             });
           } else {
-            const stopLoss = entryPrice * (1 + this.config.stopLossPct);
-            const takeProfit = entryPrice * (1 - this.config.takeProfitPct);
-            const size = this.computePositionSize(entryPrice, stopLoss);
+            const stopLoss = entryPx * (1 + this.config.stopLossPct);
+            const takeProfit = entryPx * (1 - this.config.takeProfitPct);
+            const size = this.computePositionSize(entryPx, stopLoss);
             this.stateStore.setPosition({
               id: createEntityId(),
               token: this.token,
               side: "SHORT",
               entryTime: tSec,
-              entryPrice,
+              entryPrice: entryPx,
               size,
               stopLoss,
               takeProfit,
@@ -370,11 +741,7 @@ export class TradingEngine {
           }
 
           const opened = this.stateStore.getPosition();
-          this.stateStore.addEvent({
-            type: "ENTRY",
-            price: entryPrice,
-            message: `${sig.type} @ market (${opened?.side})`,
-          });
+          this.emitEv("ENTRY", `${sig.type} @ market (${opened?.side})`, undefined, entryPx);
           if (opened) {
             const tradeId = createEntityId();
             this.stateStore.addTrade({
@@ -441,10 +808,10 @@ export class TradingEngine {
       }
     } catch (err) {
       this.logger.error("onTick error", err);
-      this.stateStore.addEvent({
-        type: "ERROR",
-        message: `Engine tick crashed: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      this.emitEv(
+        "ERROR",
+        `Engine tick crashed: ${err instanceof Error ? err.message : String(err)}`,
+      );
       this.running = false;
     }
 
@@ -513,11 +880,7 @@ export class TradingEngine {
     exitPrice: number,
     reason: "stop_loss" | "take_profit",
   ) {
-    this.stateStore.addEvent({
-      type: "EXIT",
-      price: exitPrice,
-      message: `${reason} (${pos.side})`,
-    });
+    this.emitEv("EXIT", `${reason} (${pos.side})`, undefined, exitPrice);
     const pnl =
       pos.side === "LONG"
         ? (exitPrice - pos.entryPrice) * pos.size
@@ -538,7 +901,6 @@ export class TradingEngine {
         pnl,
       });
     } else {
-      // 若缺少 OPEN 成交记录时的兜底，保证能平仓落账。
       const trade: Trade = {
         id: createEntityId(),
         token: pos.token,
@@ -571,7 +933,6 @@ export class TradingEngine {
     if (!Number.isFinite(cap) || cap < 0) {
       return riskBasedSize;
     }
-    // 不设最小下单量下限，仅按 watcher 配置的上限封顶。
     return Math.min(riskBasedSize, cap);
   }
 }

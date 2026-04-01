@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
+import { Contract, JsonRpcProvider } from "ethers";
 import * as path from "path";
 
 export type MarketCandle = {
@@ -187,6 +188,147 @@ export class MarketService {
       close: Number(row.close),
       volume: Number(row.volume),
     }));
+  }
+
+  private pickBestArbitrumPair(
+    pairs: Array<{
+      chainId?: string;
+      pairAddress?: string;
+      liquidity?: { usd?: number };
+    }>,
+  ): { pairAddress: string } | null {
+    const arb = pairs.filter(
+      (p) =>
+        (p.chainId ?? "").toLowerCase() === "arbitrum" &&
+        typeof p.pairAddress === "string" &&
+        p.pairAddress.length > 0,
+    );
+    if (arb.length === 0) return null;
+    arb.sort(
+      (a, b) => Number(b.liquidity?.usd ?? 0) - Number(a.liquidity?.usd ?? 0),
+    );
+    return { pairAddress: arb[0].pairAddress! };
+  }
+
+  async getErc20Decimals(tokenAddress: string): Promise<number> {
+    const token = (tokenAddress ?? "").trim();
+    if (!token) return 18;
+    const rpc = (process.env.RPC_URL ?? "").trim();
+    if (!rpc) return 18;
+    try {
+      const provider = new JsonRpcProvider(rpc);
+      const c = new Contract(
+        token,
+        ["function decimals() view returns (uint8)"],
+        provider,
+      );
+      const d = Number(await c.decimals());
+      return Number.isFinite(d) && d >= 0 && d <= 36 ? d : 18;
+    } catch {
+      return 18;
+    }
+  }
+
+  /**
+   * Dexscreener：Arbitrum 上流动性最佳池的 chart v3 OHLC（FVG 用，默认取最近 20 根）。
+   */
+  async getDexscreenerChartCandlesForArbitrum(
+    tokenAddress: string,
+    limit = 20,
+  ): Promise<MarketCandle[]> {
+    const token = tokenAddress.trim();
+    if (!token) {
+      throw new BadRequestException("tokenAddress is required");
+    }
+    const url = `https://api.dexscreener.com/latest/dex/tokens/${token}`;
+    let res: Response;
+    try {
+      res = await fetch(url, { method: "GET" });
+    } catch {
+      throw new BadRequestException("Dexscreener token request failed (network)");
+    }
+    if (!res.ok) {
+      throw new BadRequestException(
+        `Dexscreener token request failed (${res.status})`,
+      );
+    }
+    const data = (await res.json()) as {
+      pairs?: Array<{
+        chainId?: string;
+        pairAddress?: string;
+        liquidity?: { usd?: number };
+      }>;
+    };
+    const pairs = data.pairs;
+    if (!Array.isArray(pairs) || pairs.length === 0) {
+      throw new BadRequestException("Dexscreener: no pairs for token");
+    }
+    const best = this.pickBestArbitrumPair(pairs);
+    if (!best) {
+      throw new BadRequestException("Dexscreener: no arbitrum pair for chart");
+    }
+    const chartUrl = `https://io.dexscreener.com/dex/chart/v3/arbitrum/${best.pairAddress}`;
+    let chartRes: Response;
+    try {
+      chartRes = await fetch(chartUrl, { method: "GET" });
+    } catch {
+      throw new BadRequestException("Dexscreener chart request failed (network)");
+    }
+    if (!chartRes.ok) {
+      throw new BadRequestException(
+        `Dexscreener chart failed (${chartRes.status})`,
+      );
+    }
+    let chartJson: unknown;
+    try {
+      chartJson = await chartRes.json();
+    } catch {
+      throw new BadRequestException("Dexscreener chart invalid JSON");
+    }
+    const raw = this.parseDexChartCandles(chartJson);
+    if (raw.length < 3) {
+      throw new BadRequestException("Dexscreener chart: not enough candles");
+    }
+    const n = Math.min(Math.max(limit, 3), raw.length);
+    return raw.slice(-n);
+  }
+
+  private parseDexChartCandles(chartJson: unknown): MarketCandle[] {
+    const root = chartJson as Record<string, unknown>;
+    const rowsUnknown = root.candles ?? root.bars ?? root.data;
+    if (!Array.isArray(rowsUnknown)) {
+      return [];
+    }
+    const out: MarketCandle[] = [];
+    for (const row of rowsUnknown) {
+      if (!Array.isArray(row) || row.length < 5) continue;
+      const tRaw = Number(row[0]);
+      const o = Number(row[1]);
+      const h = Number(row[2]);
+      const l = Number(row[3]);
+      const c = Number(row[4]);
+      const v = row.length > 5 ? Number(row[5]) : 0;
+      if (
+        !Number.isFinite(tRaw) ||
+        !Number.isFinite(o) ||
+        !Number.isFinite(h) ||
+        !Number.isFinite(l) ||
+        !Number.isFinite(c)
+      ) {
+        continue;
+      }
+      const timeSec =
+        tRaw > 1e12 ? Math.floor(tRaw / 1000) : Math.floor(tRaw);
+      out.push({
+        time: timeSec,
+        open: o,
+        high: h,
+        low: l,
+        close: c,
+        volume: Number.isFinite(v) ? v : 0,
+      });
+    }
+    return out;
   }
 }
 
