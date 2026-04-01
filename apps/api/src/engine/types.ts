@@ -14,7 +14,21 @@ export type EntryMode = "immediate" | "delayed" | "pullback";
 /** 移动止损模式；后续可扩展，目前仅 `atr`。 */
 export type TrailingStopMode = "off" | "atr";
 
+/**
+ * 仓位名义计算方式：
+ * - risk_from_stop：按权益 × riskPerTrade 为风险预算，除以入场与止损价距离得数量（以损订仓）；
+ * - fixed_equity_percent：单笔名义 = 权益 × orderEquityPercent，再换算为代币数量。
+ */
+export type PositionSizingMode = "risk_from_stop" | "fixed_equity_percent";
+
 export type EngineRuntimeConfig = {
+  /** 账户权益名义（USD/USDT），用于模拟仓位、预占与 sizing */
+  accountEquityUsdt: number;
+  positionSizingMode: PositionSizingMode;
+  /**
+   * 仅 `fixed_equity_percent`：每笔订单目标名义占权益比例（0–1），如 0.05 = 5%。
+   */
+  orderEquityPercent: number;
   riskPerTrade: number;
   stopLossPct: number;
   takeProfitPct: number;
@@ -39,6 +53,9 @@ export type EngineRuntimeConfig = {
 };
 
 export const DEFAULT_ENGINE_RUNTIME_CONFIG: EngineRuntimeConfig = {
+  accountEquityUsdt: 10_000,
+  positionSizingMode: "risk_from_stop",
+  orderEquityPercent: 0.05,
   riskPerTrade: 0.01,
   stopLossPct: 0.0001, // 1/10000
   takeProfitPct: 0.0002, // 2/10000

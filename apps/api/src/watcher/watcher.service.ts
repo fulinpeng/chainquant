@@ -12,7 +12,7 @@ import type { ChainKey } from "../config/chains";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createEntityId } from "../domain/id";
-import type { EngineRuntimeConfig } from "../engine/types";
+import type { EngineRuntimeConfig, PositionSizingMode } from "../engine/types";
 import { coerceEntryMode, DEFAULT_ENGINE_RUNTIME_CONFIG } from "../engine/types";
 
 export type Watcher = {
@@ -308,6 +308,25 @@ export class WatcherService implements OnModuleInit {
       Math.min(86_400_000, Math.floor(entryTimeoutMsRaw)),
     );
     const entryMode = coerceEntryMode(input);
+    const accountEquityUsdt = Math.max(
+      0,
+      this.numOrDefault(
+        merged.accountEquityUsdt,
+        DEFAULT_ENGINE_RUNTIME_CONFIG.accountEquityUsdt,
+      ),
+    );
+    const orderEquityPercentRaw = this.numOrDefault(
+      merged.orderEquityPercent,
+      DEFAULT_ENGINE_RUNTIME_CONFIG.orderEquityPercent,
+    );
+    const orderEquityPercent = Math.min(
+      1,
+      Math.max(0.0001, orderEquityPercentRaw),
+    );
+    const positionSizingMode: PositionSizingMode =
+      merged.positionSizingMode === "fixed_equity_percent"
+        ? "fixed_equity_percent"
+        : "risk_from_stop";
     const trailingStopAtrMultipleRaw = this.numOrDefault(
       merged.trailingStopAtrMultiple,
       DEFAULT_ENGINE_RUNTIME_CONFIG.trailingStopAtrMultiple,
@@ -325,6 +344,9 @@ export class WatcherService implements OnModuleInit {
       Math.max(2, Math.floor(trailingStopAtrPeriodRaw)),
     );
     return {
+      accountEquityUsdt,
+      positionSizingMode,
+      orderEquityPercent,
       riskPerTrade: Math.min(1, Math.max(0, riskPerTrade)),
       stopLossPct: Math.max(0, stopLossPct),
       takeProfitPct: Math.max(0, takeProfitPct),

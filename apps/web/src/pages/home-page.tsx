@@ -13,6 +13,9 @@ type WatcherItem = {
   chain: "ethereum" | "base" | "op" | "arb" | "bnb";
   status: "RUNNING" | "STOPPED";
   config: {
+    accountEquityUsdt?: number;
+    positionSizingMode?: "risk_from_stop" | "fixed_equity_percent";
+    orderEquityPercent?: number;
     riskPerTrade: number;
     stopLossPct: number;
     takeProfitPct: number;
@@ -72,6 +75,11 @@ export default function Home() {
   const [globalStats, setGlobalStats] = useState<GlobalStats | null>(null);
   const [editing, setEditing] = useState<WatcherItem | null>(null);
   const [editConfig, setEditConfig] = useState({
+    accountEquityUsdt: "",
+    positionSizingMode: "risk_from_stop" as
+      | "risk_from_stop"
+      | "fixed_equity_percent",
+    orderEquityPercent: "",
     riskPerTrade: "",
     stopLossPct: "",
     takeProfitPct: "",
@@ -245,6 +253,15 @@ export default function Home() {
     return "pullback";
   }
 
+  function formatSizingBrief(w: WatcherItem): string {
+    const eq = w.config.accountEquityUsdt ?? 10_000;
+    if (w.config.positionSizingMode === "fixed_equity_percent") {
+      const p = (w.config.orderEquityPercent ?? 0.05) * 100;
+      return `固定${p.toFixed(1)}%·${eq}`;
+    }
+    return `以损${w.config.riskPerTrade}·${eq}`;
+  }
+
   function formatEntryColumn(w: WatcherItem): string {
     const m = resolveEntryMode(w);
     let base: string;
@@ -262,6 +279,14 @@ export default function Home() {
     setEditing(w);
     const entryTimeoutMs = w.config.entryTimeoutMs ?? 900_000;
     setEditConfig({
+      accountEquityUsdt: String(w.config.accountEquityUsdt ?? 10_000),
+      positionSizingMode:
+        w.config.positionSizingMode === "fixed_equity_percent"
+          ? "fixed_equity_percent"
+          : "risk_from_stop",
+      orderEquityPercent: String(
+        (w.config.orderEquityPercent ?? 0.05) * 100,
+      ),
       riskPerTrade: String(w.config.riskPerTrade),
       stopLossPct: String(w.config.stopLossPct),
       takeProfitPct: String(w.config.takeProfitPct),
@@ -298,7 +323,18 @@ export default function Home() {
     const trailingStopAtrPeriod = Number.isFinite(periodRaw)
       ? Math.max(2, Math.min(100, Math.floor(periodRaw)))
       : 14;
+    const accountEquityUsdt = Math.max(
+      0,
+      Number(editConfig.accountEquityUsdt) || 0,
+    );
+    const orderPctRaw = Number(editConfig.orderEquityPercent);
+    const orderEquityPercent = Number.isFinite(orderPctRaw)
+      ? Math.min(100, Math.max(0.01, orderPctRaw)) / 100
+      : 0.05;
     const payload = {
+      accountEquityUsdt,
+      positionSizingMode: editConfig.positionSizingMode,
+      orderEquityPercent,
       riskPerTrade: Number(editConfig.riskPerTrade),
       stopLossPct: Number(editConfig.stopLossPct),
       takeProfitPct: Number(editConfig.takeProfitPct),
@@ -413,7 +449,7 @@ export default function Home() {
               <tr>
                 <th className="px-3 py-2 font-medium">address</th>
                 <th className="px-3 py-2 font-medium">status</th>
-                <th className="px-3 py-2 font-medium">riskPerTrade</th>
+                <th className="px-3 py-2 font-medium">仓位/权益</th>
                 <th className="px-3 py-2 font-medium">stopLoss</th>
                 <th className="px-3 py-2 font-medium">takeProfit</th>
                 <th className="px-3 py-2 font-medium">入场</th>
@@ -453,7 +489,7 @@ export default function Home() {
                       </span>
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-oo-text">
-                      {w.config.riskPerTrade}
+                      {formatSizingBrief(w)}
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-oo-text">
                       {w.config.stopLossPct}
@@ -542,14 +578,85 @@ export default function Home() {
             <div className="watcher-config-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
               <div className="grid gap-2">
               <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
-                <span>riskPerTrade</span>
+                <span>资金总量</span>
                 <input
-                  value={editConfig.riskPerTrade}
+                  value={editConfig.accountEquityUsdt}
                   onChange={(e) =>
-                    setEditConfig((s) => ({ ...s, riskPerTrade: e.target.value }))
+                    setEditConfig((s) => ({
+                      ...s,
+                      accountEquityUsdt: e.target.value,
+                    }))
                   }
+                  placeholder="USDT 计价权益"
                   className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
                 />
+              </label>
+              <label className="grid grid-cols-[120px_1fr] items-start gap-3 text-xs text-oo-text-muted">
+                <span className="pt-2">仓位模式</span>
+                <div className="flex flex-col gap-2">
+                  <select
+                    value={editConfig.positionSizingMode}
+                    onChange={(e) =>
+                      setEditConfig((s) => ({
+                        ...s,
+                        positionSizingMode: e.target.value as
+                          | "risk_from_stop"
+                          | "fixed_equity_percent",
+                      }))
+                    }
+                    className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                  >
+                    <option value="risk_from_stop">以损订仓（riskPerTrade）</option>
+                    <option value="fixed_equity_percent">
+                      固定资金比例（单笔占权益 %）
+                    </option>
+                  </select>
+                  {editConfig.positionSizingMode === "risk_from_stop" && (
+                    <>
+                      <label className="grid grid-cols-[auto_1fr] items-center gap-2 text-[11px] text-oo-text-muted">
+                        <span className="whitespace-nowrap">riskPerTrade</span>
+                        <input
+                          value={editConfig.riskPerTrade}
+                          onChange={(e) =>
+                            setEditConfig((s) => ({
+                              ...s,
+                              riskPerTrade: e.target.value,
+                            }))
+                          }
+                          className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                        />
+                      </label>
+                      <span className="text-[11px] leading-snug text-oo-text-muted">
+                        单笔最大亏损占权益比例；仓位数量 = (权益 × riskPerTrade) ÷ |入场价 −
+                        止损价|，并受「最大持仓量（代币）」上限。
+                      </span>
+                    </>
+                  )}
+                  {editConfig.positionSizingMode === "fixed_equity_percent" && (
+                    <>
+                      <label className="grid grid-cols-[auto_1fr] items-center gap-2 text-[11px] text-oo-text-muted">
+                        <span className="whitespace-nowrap">单笔占权益 %</span>
+                        <input
+                          type="number"
+                          min={0.01}
+                          max={100}
+                          step={0.1}
+                          value={editConfig.orderEquityPercent}
+                          onChange={(e) =>
+                            setEditConfig((s) => ({
+                              ...s,
+                              orderEquityPercent: e.target.value,
+                            }))
+                          }
+                          className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                        />
+                      </label>
+                      <span className="text-[11px] leading-snug text-oo-text-muted">
+                        单笔目标名义 = 权益 × 该百分比，再除以现价得代币数量；同样受「最大持仓量（代币）」上限。
+                      </span>
+                    </>
+                  )}
+                </div>
               </label>
               <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
                 <span>stopLossPct</span>
@@ -708,15 +815,24 @@ export default function Home() {
                   )}
                 </div>
               </label>
-              <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
-                <span>maxTradeAmount</span>
-                <input
-                  value={editConfig.maxTradeAmount}
-                  onChange={(e) =>
-                    setEditConfig((s) => ({ ...s, maxTradeAmount: e.target.value }))
-                  }
-                  className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
-                />
+              <label className="grid grid-cols-[120px_1fr] items-start gap-3 text-xs text-oo-text-muted">
+                <span className="pt-2">maxTradeAmount</span>
+                <div className="flex flex-col gap-1">
+                  <input
+                    value={editConfig.maxTradeAmount}
+                    onChange={(e) =>
+                      setEditConfig((s) => ({
+                        ...s,
+                        maxTradeAmount: e.target.value,
+                      }))
+                    }
+                    className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
+                  />
+                  <span className="text-[11px] leading-snug text-oo-text-muted">
+                    单标的最大持仓数量（代币枚数）上限，参与以损/固定比例 sizing。live：BUY
+                    时链上实际投入 WETH ≈（该代币仓位名义 ÷ ETH/USD）；SELL 时卖出代币数量即仓位数量。
+                  </span>
+                </div>
               </label>
               <label className="grid grid-cols-[120px_1fr] items-center gap-3 text-xs text-oo-text-muted">
                 <span>slippage</span>

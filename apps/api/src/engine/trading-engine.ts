@@ -36,7 +36,6 @@ function nowUnixSec(): number {
 export class TradingEngine {
   private readonly logger: Logger;
   private readonly stateStore = new StateStore();
-  private readonly account = { balance: 10000 };
   private pendingSignalTick: number | null = null;
 
   private running = false;
@@ -188,10 +187,46 @@ export class TradingEngine {
       return { ok: true, ignored: true };
     }
 
-    const reserveAmount = this.config.maxTradeAmount;
-    if (!Number.isFinite(reserveAmount) || reserveAmount <= 0) {
+    const equity = this.config.accountEquityUsdt;
+    if (!Number.isFinite(equity) || equity <= 0) {
+      this.emitEv("RESERVATION_FAILED", "accountEquityUsdt invalid", {
+        reason: "invalid_account_equity",
+      });
+      return { ok: true, ignored: true };
+    }
+
+    const maxTa = Number(this.config.maxTradeAmount);
+    if (!Number.isFinite(maxTa) || maxTa <= 0) {
       this.emitEv("RESERVATION_FAILED", "maxTradeAmount invalid", {
         reason: "invalid_max_trade_amount",
+      });
+      return { ok: true, ignored: true };
+    }
+
+    const refPx = await this.resolveRefPriceUsd(signal);
+    if (refPx == null || !Number.isFinite(refPx) || refPx <= 0) {
+      this.emitEv("RESERVATION_FAILED", "Cannot resolve token price for reservation", {
+        reason: "no_ref_price",
+      });
+      return { ok: true, ignored: true };
+    }
+
+    const provisionalStop =
+      signal.type === "BUY"
+        ? refPx * (1 - this.config.stopLossPct)
+        : refPx * (1 + this.config.stopLossPct);
+    const provisionalSize = this.computePositionSize(refPx, provisionalStop);
+    const notionalUsd = provisionalSize * refPx;
+    const reserveAmount = Math.min(
+      Math.max(notionalUsd, 1e-9),
+      equity,
+    );
+
+    if (!Number.isFinite(reserveAmount) || reserveAmount <= 0) {
+      this.emitEv("RESERVATION_FAILED", "Computed reservation notional is zero", {
+        reason: "zero_reserve_notional",
+        refPx,
+        provisionalSize,
       });
       return { ok: true, ignored: true };
     }
@@ -199,13 +234,13 @@ export class TradingEngine {
     const okReserve = this.fundsService.reserve(
       this.address,
       reserveAmount,
-      this.account.balance,
+      equity,
     );
     if (!okReserve) {
       this.emitEv("RESERVATION_FAILED", "Insufficient balance for reservation", {
         address: this.address,
         amount: reserveAmount,
-        balance: this.account.balance,
+        balance: equity,
         reserved: this.fundsService.getReserved(this.address),
       });
       return { ok: true, ignored: true };
@@ -286,7 +321,7 @@ export class TradingEngine {
           this.executionPending = true;
           this.executionReady = false;
           this.executionFailReason = null;
-          const result = await this.runExecution(signal);
+          const result = await this.runExecution(signal, tokenUsd);
           this.applyExecutionResult(result, signal);
           const canEnter = this.canEnterFromExecutionResult(result);
           if (canEnter) {
@@ -353,7 +388,10 @@ export class TradingEngine {
     this.executionPending = true;
     this.executionReady = false;
     this.executionFailReason = null;
-    void this.runExecution(signal)
+    void this.runExecution(
+      signal,
+      domainSignal.price > 0 ? domainSignal.price : undefined,
+    )
       .then((result) => {
         try {
           this.applyExecutionResult(result, signal);
@@ -403,16 +441,94 @@ export class TradingEngine {
     this.pendingExecutionSignal = undefined;
   }
 
-  private async runExecution(signal: CopierSignalPayload): Promise<ExecuteResult> {
+  /**
+   * @param entryPriceUsdHint 用于 live 下按仓位模式换算 amountIn（BUY=WETH 数量，SELL=代币数量）；缺省时再拉现价。
+   */
+  private async runExecution(
+    signal: CopierSignalPayload,
+    entryPriceUsdHint?: number,
+  ): Promise<ExecuteResult> {
     const wrapped = CHAINS.arb.wrappedNative.address;
     const tokenIn = signal.type === "BUY" ? wrapped : this.token;
     const tokenOut = signal.type === "BUY" ? this.token : wrapped;
+
+    if (this.config.mode === "paper") {
+      return this.executionService.execute({
+        mode: "paper",
+        tokenIn,
+        tokenOut,
+        amountInRaw: signal.amount,
+        maxTradeAmount: this.config.maxTradeAmount,
+        slippage: this.config.slippage,
+      });
+    }
+
+    const entryPx =
+      entryPriceUsdHint != null &&
+      Number.isFinite(entryPriceUsdHint) &&
+      entryPriceUsdHint > 0
+        ? entryPriceUsdHint
+        : await this.resolveRefPriceUsd(signal);
+    if (entryPx == null || entryPx <= 0) {
+      return {
+        ok: false,
+        mode: "live",
+        reason: "no_entry_price_for_live_sizing",
+      };
+    }
+
+    const stop =
+      signal.type === "BUY"
+        ? entryPx * (1 - this.config.stopLossPct)
+        : entryPx * (1 + this.config.stopLossPct);
+    const tokenSize = this.computePositionSize(entryPx, stop);
+    if (!Number.isFinite(tokenSize) || tokenSize <= 0) {
+      return {
+        ok: false,
+        mode: "live",
+        reason: "invalid_position_size",
+      };
+    }
+
+    let maxTradeAmountForExec: number;
+    if (signal.type === "BUY") {
+      let ethUsd: number;
+      try {
+        ethUsd = await this.marketService.getLatestPrice();
+      } catch {
+        return {
+          ok: false,
+          mode: "live",
+          reason: "eth_usd_price_unavailable",
+        };
+      }
+      if (!Number.isFinite(ethUsd) || ethUsd <= 0) {
+        return {
+          ok: false,
+          mode: "live",
+          reason: "eth_usd_price_invalid",
+        };
+      }
+      const notionalUsd = tokenSize * entryPx;
+      maxTradeAmountForExec = notionalUsd / ethUsd;
+    } else {
+      maxTradeAmountForExec = tokenSize;
+    }
+
+    if (!Number.isFinite(maxTradeAmountForExec) || maxTradeAmountForExec <= 0) {
+      return {
+        ok: false,
+        mode: "live",
+        reason: "invalid_live_amount_in",
+      };
+    }
+
     return this.executionService.execute({
-      mode: this.config.mode,
+      mode: "live",
       tokenIn,
       tokenOut,
       amountInRaw: signal.amount,
-      maxTradeAmount: this.config.maxTradeAmount,
+      maxTradeAmount: maxTradeAmountForExec,
       slippage: this.config.slippage,
     });
   }
@@ -719,7 +835,7 @@ export class TradingEngine {
               this.executionPending = true;
               this.executionReady = false;
               this.executionFailReason = null;
-              const result = await this.runExecution(sig);
+              const result = await this.runExecution(sig, livePrice);
               this.applyExecutionResult(result, sig);
               if (this.canEnterFromExecutionResult(result)) {
                 this.enterInPositionAtPrice(livePrice, sig.type, tSec);
@@ -988,17 +1104,55 @@ export class TradingEngine {
     this.lastExitTick = this.tickCount;
   }
 
+  /** 用于预占与仓位计算的现货参考价（USD/枚）。 */
+  private async resolveRefPriceUsd(
+    signal: CopierSignalPayload,
+  ): Promise<number | null> {
+    const p = signal.price ?? this.currentPrice;
+    if (Number.isFinite(p) && p != null && p > 0) {
+      return p;
+    }
+    try {
+      const px = await this.marketService.getLatestPriceByToken(this.token);
+      return Number.isFinite(px) && px > 0 ? px : null;
+    } catch {
+      return null;
+    }
+  }
+
   private computePositionSize(entryPrice: number, stopLoss: number): number {
-    const riskAmount = this.account.balance * this.config.riskPerTrade;
+    const equity = this.config.accountEquityUsdt;
+    if (!Number.isFinite(equity) || equity <= 0) {
+      return 0;
+    }
+    if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+      return 0;
+    }
+
+    const cap = Number(this.config.maxTradeAmount);
+    const applyCap = (size: number): number => {
+      if (!Number.isFinite(cap) || cap < 0) {
+        return size;
+      }
+      return Math.min(size, cap);
+    };
+
+    if (this.config.positionSizingMode === "fixed_equity_percent") {
+      const pct = this.config.orderEquityPercent;
+      if (!Number.isFinite(pct) || pct <= 0) {
+        return 0;
+      }
+      const notionalUsd = equity * pct;
+      const size = notionalUsd / entryPrice;
+      return applyCap(size);
+    }
+
+    const riskAmount = equity * this.config.riskPerTrade;
     const stopLossDistance = Math.abs(entryPrice - stopLoss);
     if (!Number.isFinite(stopLossDistance) || stopLossDistance <= 0) {
       return 0;
     }
     const riskBasedSize = riskAmount / stopLossDistance;
-    const cap = Number(this.config.maxTradeAmount);
-    if (!Number.isFinite(cap) || cap < 0) {
-      return riskBasedSize;
-    }
-    return Math.min(riskBasedSize, cap);
+    return applyCap(riskBasedSize);
   }
 }
