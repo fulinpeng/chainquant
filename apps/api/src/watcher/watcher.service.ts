@@ -308,6 +308,22 @@ export class WatcherService implements OnModuleInit {
       Math.min(86_400_000, Math.floor(entryTimeoutMsRaw)),
     );
     const entryMode = coerceEntryMode(input);
+    const trailingStopAtrMultipleRaw = this.numOrDefault(
+      merged.trailingStopAtrMultiple,
+      DEFAULT_ENGINE_RUNTIME_CONFIG.trailingStopAtrMultiple,
+    );
+    const trailingStopAtrPeriodRaw = this.numOrDefault(
+      merged.trailingStopAtrPeriod,
+      DEFAULT_ENGINE_RUNTIME_CONFIG.trailingStopAtrPeriod,
+    );
+    const trailingStopAtrMultiple = Math.min(
+      50,
+      Math.max(0.5, trailingStopAtrMultipleRaw),
+    );
+    const trailingStopAtrPeriod = Math.min(
+      100,
+      Math.max(2, Math.floor(trailingStopAtrPeriodRaw)),
+    );
     return {
       riskPerTrade: Math.min(1, Math.max(0, riskPerTrade)),
       stopLossPct: Math.max(0, stopLossPct),
@@ -319,6 +335,9 @@ export class WatcherService implements OnModuleInit {
       minSignalNotionalUsdt: Math.max(0, minSignalNotionalUsdt),
       entryTimeoutMs,
       entryMode,
+      trailingStopMode: merged.trailingStopMode === "atr" ? "atr" : "off",
+      trailingStopAtrMultiple,
+      trailingStopAtrPeriod,
     };
   }
 

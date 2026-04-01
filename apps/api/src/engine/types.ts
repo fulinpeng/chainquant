@@ -11,6 +11,9 @@ export type EngineMode = "MANUAL" | "AUTO";
  */
 export type EntryMode = "immediate" | "delayed" | "pullback";
 
+/** 移动止损模式；后续可扩展，目前仅 `atr`。 */
+export type TrailingStopMode = "off" | "atr";
+
 export type EngineRuntimeConfig = {
   riskPerTrade: number;
   stopLossPct: number;
@@ -27,6 +30,12 @@ export type EngineRuntimeConfig = {
   /** 回调入场模式下，挂单等待触价的最长时间（毫秒），默认 15 分钟 */
   entryTimeoutMs: number;
   entryMode: EntryMode;
+  /** 移动止损：关闭，或按 ATR（与 {@link trailingStopAtrMultiple} / {@link trailingStopAtrPeriod} 配合） */
+  trailingStopMode: TrailingStopMode;
+  /** ATR 倍数；仅 `trailingStopMode === "atr"` 时生效 */
+  trailingStopAtrMultiple: number;
+  /** 计算 ATR 所用 K 线根数（Dexscreener chart），默认 14 */
+  trailingStopAtrPeriod: number;
 };
 
 export const DEFAULT_ENGINE_RUNTIME_CONFIG: EngineRuntimeConfig = {
@@ -40,6 +49,9 @@ export const DEFAULT_ENGINE_RUNTIME_CONFIG: EngineRuntimeConfig = {
   minSignalNotionalUsdt: 0,
   entryTimeoutMs: 900_000,
   entryMode: "pullback",
+  trailingStopMode: "off",
+  trailingStopAtrMultiple: 3,
+  trailingStopAtrPeriod: 14,
 };
 
 /** 兼容旧存盘：仅有 fvgEnabled / delayEntry 或 immediate+delayEntry 组合时推导 entryMode */
