@@ -52,6 +52,41 @@ chainquant/
 └─ README.md
 ```
 
+### 架构图（运行时数据流）
+
+```mermaid
+flowchart LR
+  U[用户/钱包] --> W[Web 前端 apps/web]
+  W -->|HTTP| A[API apps/api]
+
+  subgraph API 核心域
+    WC[WatcherController/Service]
+    LS[ListenerService]
+    PS[ParserService]
+    EM[EngineManager + TradingEngine]
+    ES[ExecutionService]
+    QS[QueryController]
+    DS[DbSidecarService]
+  end
+
+  A --> WC
+  A --> QS
+  WC --> LS
+  LS --> PS
+  LS --> EM
+  EM --> ES
+  EM --> DS
+  ES --> DS
+
+  LS -->|WS 订阅区块/交易| CH[(EVM Chains)]
+  ES -->|发送交易| CH
+  ES -->|报价/价格| DX[(RPC / Quoter / Dexscreener)]
+
+  DS --> DB[(SQLite / Prisma)]
+  QS --> DB
+  WC --> DB
+```
+
 ---
 
 ## 技术栈
@@ -163,41 +198,6 @@ pnpm build
 - **执行**：`paper` 模式不发链；`live` 模式使用配置私钥在 Arbitrum 上执行受控 swap，并通过进程内串行与可选的 **pending 超时 + 同 nonce 加价重发** 降低拥堵下的卡单风险。
 
 更细的接口与领域模型以源码与 OpenAPI（若有）为准。
-
-### 架构图（运行时数据流）
-
-```mermaid
-flowchart LR
-  U[用户/钱包] --> W[Web 前端 apps/web]
-  W -->|HTTP| A[API apps/api]
-
-  subgraph API 核心域
-    WC[WatcherController/Service]
-    LS[ListenerService]
-    PS[ParserService]
-    EM[EngineManager + TradingEngine]
-    ES[ExecutionService]
-    QS[QueryController]
-    DS[DbSidecarService]
-  end
-
-  A --> WC
-  A --> QS
-  WC --> LS
-  LS --> PS
-  LS --> EM
-  EM --> ES
-  EM --> DS
-  ES --> DS
-
-  LS -->|WS 订阅区块/交易| CH[(EVM Chains)]
-  ES -->|发送交易| CH
-  ES -->|报价/价格| DX[(RPC / Quoter / Dexscreener)]
-
-  DS --> DB[(SQLite / Prisma)]
-  QS --> DB
-  WC --> DB
-```
 
 ---
 
