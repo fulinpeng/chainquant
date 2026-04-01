@@ -23,6 +23,18 @@ function fmtPct(n: number) {
   return `${(n * 100).toFixed(2)}%`;
 }
 
+function signedNumClass(n: number): string {
+  if (!Number.isFinite(n) || n == 0) return "text-oo-text";
+  return n > 0 ? "text-green-400" : "text-red-400";
+}
+
+function winRateClass(n: number): string {
+  if (!Number.isFinite(n)) return "text-oo-text";
+  if (n > 0.5) return "text-green-400";
+  if (n < 0.5) return "text-red-400";
+  return "text-oo-text";
+}
+
 export default function StatsSummaryCards({
   data,
   title,
@@ -40,11 +52,13 @@ export default function StatsSummaryCards({
       </div>
       <div className="rounded-xl border border-oo-border bg-oo-surface p-4">
         <p className="text-xs text-oo-text-muted">总收益</p>
-        <p className="mt-2 text-lg font-semibold text-oo-text">{fmtNum(data?.totalPnl ?? Number.NaN)}</p>
+        <p className={`mt-2 text-lg font-semibold ${signedNumClass(data?.totalPnl ?? Number.NaN)}`}>{fmtNum(data?.totalPnl ?? Number.NaN)}</p>
       </div>
       <div className="rounded-xl border border-oo-border bg-oo-surface p-4">
         <p className="text-xs text-oo-text-muted">胜率</p>
-        <p className="mt-2 text-lg font-semibold text-oo-text">{fmtPct(data?.winRate ?? Number.NaN)}</p>
+        <p className={`mt-2 text-lg font-semibold ${winRateClass(data?.winRate ?? Number.NaN)}`}>
+          {fmtPct(data?.winRate ?? Number.NaN)}
+        </p>
       </div>
       <div className="rounded-xl border border-oo-border bg-oo-surface p-4">
         <p className="text-xs text-oo-text-muted">Open Positions</p>

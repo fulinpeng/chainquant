@@ -258,9 +258,11 @@ export default function EngineDetailPage() {
                       className={`px-3 py-2 font-mono text-xs ${
                         t.pnl == null
                           ? "text-oo-text-muted"
-                          : t.pnl >= 0
-                            ? "text-oo-success"
-                            : "text-oo-error"
+                          : t.pnl > 0
+                            ? "text-green-400"
+                            : t.pnl < 0
+                              ? "text-red-400"
+                              : "text-oo-text"
                       }`}
                     >
                       {fmtTradeNum(t.pnl)}

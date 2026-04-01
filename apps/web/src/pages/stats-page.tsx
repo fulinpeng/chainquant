@@ -45,6 +45,11 @@ function fmtTime(raw: string) {
   return d.toLocaleString();
 }
 
+function signedNumClass(n: number): string {
+  if (!Number.isFinite(n) || n == 0) return "text-oo-text";
+  return n > 0 ? "text-green-400" : "text-red-400";
+}
+
 export default function HomePage() {
   const router = useRouter();
   const routeParams = useParams<{ address?: string }>();
@@ -167,7 +172,7 @@ export default function HomePage() {
                     <td className="px-3 py-2 text-xs">{t.status}</td>
                     <td className="px-3 py-2 font-mono text-xs">{fmtNum(t.entryPrice)}</td>
                     <td className="px-3 py-2 font-mono text-xs">{t.exitPrice == null ? "--" : fmtNum(t.exitPrice)}</td>
-                    <td className="px-3 py-2 font-mono text-xs">{t.pnl == null ? "--" : fmtNum(t.pnl)}</td>
+                    <td className={`px-3 py-2 font-mono text-xs ${t.pnl == null ? "text-oo-text" : signedNumClass(t.pnl)}`}>{t.pnl == null ? "--" : fmtNum(t.pnl)}</td>
                     <td className="px-3 py-2 text-xs">{fmtTime(t.createdAt)}</td>
                   </tr>
                 ))
