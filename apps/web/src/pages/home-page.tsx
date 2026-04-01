@@ -257,9 +257,9 @@ export default function Home() {
     const eq = w.config.accountEquityUsdt ?? 10_000;
     if (w.config.positionSizingMode === "fixed_equity_percent") {
       const p = (w.config.orderEquityPercent ?? 0.05) * 100;
-      return `固定${p.toFixed(1)}%·${eq}`;
+      return `固定资金${p.toFixed(1)}%·${eq}`;
     }
-    return `以损${w.config.riskPerTrade}·${eq}`;
+    return `以损定仓${w.config.riskPerTrade}·${eq}`;
   }
 
   function formatEntryColumn(w: WatcherItem): string {
@@ -504,55 +504,84 @@ export default function Home() {
                       {fmtTime(w.createdAt)}
                     </td>
                     <td className="px-3 py-2 text-xs">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
                         {w.status === "RUNNING" ? (
                           <button
                             type="button"
                             onClick={() => void runAction("stop", w.address, w.chain)}
-                            className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
+                            title="Stop"
+                            aria-label="Stop"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-oo-border-strong text-oo-text-secondary transition hover:bg-oo-surface-hover"
                           >
-                            Stop
+                            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                              <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                            </svg>
                           </button>
                         ) : (
                           <button
                             type="button"
                             onClick={() => void runAction("start", w.address, w.chain)}
-                            className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
+                            title="Start"
+                            aria-label="Start"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-oo-border-strong text-oo-text-secondary transition hover:bg-oo-surface-hover"
                           >
-                            Start
+                            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                              <path d="M8 6v12l10-6z" />
+                            </svg>
                           </button>
                         )}
                         <button
                           type="button"
                           onClick={() => void runAction("delete", w.address, w.chain)}
-                          className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
+                          title="Delete"
+                          aria-label="Delete"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-oo-border-strong text-oo-text-secondary transition hover:bg-oo-surface-hover"
                         >
-                          Delete
+                          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                            <path d="M4 7h16" />
+                            <path d="M9 7V5h6v2" />
+                            <path d="M7 7l1 12h8l1-12" />
+                          </svg>
                         </button>
                         <button
                           type="button"
                           onClick={() => openEdit(w)}
-                          className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
+                          title="Edit"
+                          aria-label="Edit"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-oo-border-strong text-oo-text-secondary transition hover:bg-oo-surface-hover"
                         >
-                          Edit
+                          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                            <path d="M4 20h4l10-10-4-4L4 16z" />
+                            <path d="M13 7l4 4" />
+                          </svg>
                         </button>
                         <button
                           type="button"
                           onClick={() => viewWatcher(w)}
+                          title="View"
+                          aria-label="View"
                           className={`rounded-md border px-3 py-1.5 transition ${
                             w.status === "RUNNING"
                               ? "border-oo-border-strong text-oo-text-secondary hover:bg-oo-surface-hover"
                               : "border-oo-border text-oo-text-muted"
-                          }`}
+                          } inline-flex h-8 w-8 items-center justify-center p-0`}
                         >
-                          View
+                          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden="true">
+                            <path d="M12 5c6.5 0 10.7 6.1 10.9 6.4a1 1 0 0 1 0 1.2C22.7 12.9 18.5 19 12 19S1.3 12.9 1.1 12.6a1 1 0 0 1 0-1.2C1.3 11.1 5.5 5 12 5zm0 2C7.5 7 4.1 10.7 3.2 12 4.1 13.3 7.5 17 12 17s7.9-3.7 8.8-5C19.9 10.7 16.5 7 12 7zm0 2.5A2.5 2.5 0 1 1 9.5 12 2.5 2.5 0 0 1 12 9.5z" />
+                          </svg>
                         </button>
                         <button
                           type="button"
                           onClick={() => viewStats(w)}
-                          className="rounded-md border border-oo-border-strong px-3 py-1.5 text-oo-text-secondary transition hover:bg-oo-surface-hover"
+                          title="Stats"
+                          aria-label="Stats"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-oo-border-strong text-oo-text-secondary transition hover:bg-oo-surface-hover"
                         >
-                          Stats
+                          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                            <rect x="5" y="11" width="3" height="8" rx="1" />
+                            <rect x="10.5" y="7" width="3" height="12" rx="1" />
+                            <rect x="16" y="4" width="3" height="15" rx="1" />
+                          </svg>
                         </button>
                       </div>
                     </td>
@@ -606,7 +635,7 @@ export default function Home() {
                     }
                     className="rounded-lg border border-oo-border-strong bg-oo-bg px-3 py-2 text-sm text-oo-text"
                   >
-                    <option value="risk_from_stop">以损订仓（riskPerTrade）</option>
+                    <option value="risk_from_stop">以损定仓（riskPerTrade）</option>
                     <option value="fixed_equity_percent">
                       固定资金比例（单笔占权益 %）
                     </option>

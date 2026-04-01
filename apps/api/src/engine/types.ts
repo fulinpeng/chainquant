@@ -16,7 +16,7 @@ export type TrailingStopMode = "off" | "atr";
 
 /**
  * 仓位名义计算方式：
- * - risk_from_stop：按权益 × riskPerTrade 为风险预算，除以入场与止损价距离得数量（以损订仓）；
+ * - risk_from_stop：按权益 × riskPerTrade 为风险预算，除以入场与止损价距离得数量（以损定仓）；
  * - fixed_equity_percent：单笔名义 = 权益 × orderEquityPercent，再换算为代币数量。
  */
 export type PositionSizingMode = "risk_from_stop" | "fixed_equity_percent";
