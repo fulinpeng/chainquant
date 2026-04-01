@@ -21,12 +21,13 @@ chainquant/
 ├─ apps/
 │  ├─ api/
 │  │  ├─ src/
-│  │  │  ├─ listener/        # 链上监听与交易解析（区块扫描、V3/V4 解析）
-│  │  │  ├─ execution/       # 实盘执行（含 pending 超时加价重发）
-│  │  │  ├─ watcher/         # Watcher 管理与配置更新
-│  │  │  ├─ engine/          # 状态机引擎（信号→入场→持仓→平仓）
-│  │  │  ├─ query/           # Dashboard / Trades / Events 查询接口
-│  │  │  ├─ persistence/     # DB sidecar（非阻塞落库）
+│  │  │  ├─ listener/        # 链上监听与交易解析（多链 WS、V3 calldata / V4 日志）
+│  │  │  ├─ execution/       # 换币执行 + Quoter（pending 超时同 nonce 加价重发）
+│  │  │  ├─ risk/            # FundsService：跟单预占资金（全局模块）
+│  │  │  ├─ watcher/         # Watcher CRUD/启停与配置（JSON 落库）
+│  │  │  ├─ engine/          # EngineManager + TradingEngine（入场模式、FVG、移动止损）
+│  │  │  ├─ query/           # Stats / Trades / Events 等只读查询
+│  │  │  ├─ persistence/     # DbSidecar：成交/执行事件异步落库
 │  │  │  └─ ...
 │  │  ├─ .env.example
 │  │  └─ package.json
@@ -52,39 +53,38 @@ chainquant/
 └─ README.md
 ```
 
-### 架构图（运行时数据流）
+### 架构图（运行时数据流 · 竖版）
 
 ```mermaid
-flowchart LR
-  U[用户/钱包] --> W[Web 前端 apps/web]
-  W -->|HTTP| A[API apps/api]
+flowchart TB
+  U[用户 / 钱包] --> W[Next.js · apps/web]
+  W -->|REST| R[HTTP 路由层<br/>Watcher · Copier · Engine<br/>Query · Auth · Health<br/>Market · Backtest]
 
-  subgraph API 核心域
-    WC[WatcherController/Service]
-    LS[ListenerService]
-    PS[ParserService]
-    EM[EngineManager + TradingEngine]
-    ES[ExecutionService]
-    QS[QueryController]
-    DS[DbSidecarService]
-  end
+  R --> WS[WatcherService<br/>配置读写 · 启停 Listener]
+  WS --> DB[(packages/db · Prisma / SQLite)]
+  WS --> LS[ListenerService<br/>按链 WebSocket 订阅新区块]
 
-  A --> WC
-  A --> QS
-  WC --> LS
-  LS --> PS
-  LS --> EM
-  EM --> ES
-  EM --> DS
-  ES --> DS
+  LS --> PS[ParserService<br/>V3 calldata · V4 receipt 日志]
+  PS -->|跟单信号| EM[EngineManager · TradingEngine<br/>入场模式 · FVG 回调 · tick<br/>固定止盈止损 · ATR 移动止损 · paper/live]
 
-  LS -->|WS 订阅区块/交易| CH[(EVM Chains)]
-  ES -->|发送交易| CH
-  ES -->|报价/价格| DX[(RPC / Quoter / Dexscreener)]
+  R -->|Copier / Engine 手动或测试| EM
 
-  DS --> DB[(SQLite / Prisma)]
-  QS --> DB
-  WC --> DB
+  EM --> FD[FundsService · RiskModule<br/>信号预占与释放]
+  EM --> MK[MarketService<br/>Dexscreener K 线 / 现价等]
+  EM --> EX[ExecutionService]
+  EX --> QU[QuoterService · RPC 询价]
+
+  EM --> DC[DbSidecarService · 异步落库]
+  EX --> DC
+  DC --> DB
+
+  R --> QY[Query · 全局/地址统计<br/>Trades · Events]
+  QY --> DB
+
+  LS -. WebSocket 区块与日志 .-> CH[(EVM 节点)]
+  EX -. live 模式广播 swap .-> CH
+  QU -. on-chain quote .-> CH
+  MK -. HTTP .-> DX[(Dexscreener 等外部行情)]
 ```
 
 ---
@@ -193,8 +193,10 @@ pnpm build
 
 ## 架构要点（只读说明）
 
-- **Watcher**：地址与运行时配置存于数据库 JSON；启动后由 Listener 按链订阅新区块并解析目标 Router 上的 swap。
+- **Watcher**：地址与运行时配置（含入场模式、FVG 超时、ATR 移动止损等）存于数据库 JSON；启动后由 Listener 按链订阅新区块并解析目标 Router 上的 swap。
 - **解析**：Uniswap V3 `exactInputSingle` 以 calldata 解码为主；V4 Universal Router 结合 receipt 日志。
+- **引擎**：`EngineManager` 按 `(address, token)` 维护 `TradingEngine`；信号路径上可做 FVG 校验与回调触价，持仓阶段可选按 K 线 ATR 收紧止损。
+- **资金**：`FundsService`（`RiskModule`）在跟单链路中做预占/释放，降低多 watcher 同址超额下单风险。
 - **执行**：`paper` 模式不发链；`live` 模式使用配置私钥在 Arbitrum 上执行受控 swap，并通过进程内串行与可选的 **pending 超时 + 同 nonce 加价重发** 降低拥堵下的卡单风险。
 
 更细的接口与领域模型以源码与 OpenAPI（若有）为准。
