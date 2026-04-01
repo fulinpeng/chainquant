@@ -6,11 +6,13 @@
 
 ## 仓库结构
 
-| 路径 | 说明 |
-|------|------|
-| `apps/api` | NestJS 服务（HTTP API、链上 Listener、执行层、Watcher 等） |
-| `apps/web` | Next.js 15（App Router）前端 |
-| `packages/db` | Prisma Schema、迁移与 `@chainquant/db` 数据访问层 |
+
+| 路径            | 说明                                            |
+| ------------- | --------------------------------------------- |
+| `apps/api`    | NestJS 服务（HTTP API、链上 Listener、执行层、Watcher 等） |
+| `apps/web`    | Next.js 15（App Router）前端                      |
+| `packages/db` | Prisma Schema、迁移与 `@chainquant/db` 数据访问层      |
+
 
 根目录脚本通过 `pnpm -r` 并行/递归编排各子包。
 
@@ -86,6 +88,8 @@ flowchart TB
   QU -. on-chain quote .-> CH
   MK -. HTTP .-> DX[(Dexscreener 等外部行情)]
 ```
+
+
 
 ---
 
@@ -167,8 +171,8 @@ pnpm dev
 
 默认习惯：
 
-- 前端：<http://localhost:3000>
-- API：<http://localhost:3001>（以 `main.ts` 中 `listen` 为准）
+- 前端：[http://localhost:3000](http://localhost:3000)
+- API：[http://localhost:3001](http://localhost:3001)（以 `main.ts` 中 `listen` 为准）
 
 ### 6. 生产构建
 
@@ -182,12 +186,14 @@ pnpm build
 
 ## 常用命令
 
-| 命令 | 说明 |
-|------|------|
-| `pnpm dev` | 根目录并行执行各 workspace 的 `dev` |
-| `pnpm build` | 全仓库 `build` |
-| `pnpm --filter @chainquant/db run db:generate` | 仅生成 Prisma Client |
-| `pnpm --filter @chainquant/api run build` | 仅构建 API |
+
+| 命令                                             | 说明                         |
+| ---------------------------------------------- | -------------------------- |
+| `pnpm dev`                                     | 根目录并行执行各 workspace 的 `dev` |
+| `pnpm build`                                   | 全仓库 `build`                |
+| `pnpm --filter @chainquant/db run db:generate` | 仅生成 Prisma Client          |
+| `pnpm --filter @chainquant/api run build`      | 仅构建 API                    |
+
 
 ---
 
@@ -200,16 +206,3 @@ pnpm build
 - **执行**：`paper` 模式不发链；`live` 模式使用配置私钥在 Arbitrum 上执行受控 swap，并通过进程内串行与可选的 **pending 超时 + 同 nonce 加价重发** 降低拥堵下的卡单风险。
 
 更细的接口与领域模型以源码与 OpenAPI（若有）为准。
-
----
-
-## 许可与贡献
-
-若需对外开源，请在根目录补充 `LICENSE` 并在此节指向该文件；贡献流程（Issue / PR、代码风格）可由团队另行约定。
-
----
-
-## 相关路径
-
-- API 环境变量示例：`apps/api/.env.example`
-- Prisma Schema：`packages/db/prisma/schema.prisma`
