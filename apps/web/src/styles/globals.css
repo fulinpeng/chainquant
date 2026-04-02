@@ -35,6 +35,11 @@
   --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
 }
 
+/* 全局字号 +1 档：在默认 16px 基准上约 +1px，随 rem 的组件一并放大 */
+html {
+  font-size: 106.25%;
+}
+
 body {
   background-color: var(--oo-bg);
   color: var(--oo-text);
