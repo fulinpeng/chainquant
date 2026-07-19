@@ -197,7 +197,7 @@ pnpm build
 
 ---
 
-## 架构要点（只读说明）
+## 架构要点
 
 - **Watcher**：地址与运行时配置（含入场模式、FVG 超时、ATR 移动止损等）存于数据库 JSON；启动后由 Listener 按链订阅新区块并解析目标 Router 上的 swap。
 - **解析**：Uniswap V3 `exactInputSingle` 以 calldata 解码为主；V4 Universal Router 结合 receipt 日志。
